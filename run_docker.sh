@@ -1,0 +1,1 @@
+docker run --name locosim_c --rm -v "$(pwd)/locosim/ros_ws:/home/ubuntu/ros_ws" -p 6080:80 --shm-size=512m --platform linux/amd64 locosim:noetic
