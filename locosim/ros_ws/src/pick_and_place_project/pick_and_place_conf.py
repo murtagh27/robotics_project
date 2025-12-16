@@ -42,15 +42,15 @@ objects = {
         'initial_pos': np.array([0.35, 0.5, table_height + 0.025]),
         'target_pos': np.array([0.35, 1.0, target_table_height + 0.025]),
         'color': 'red',
-        'priority': 1  # Pick order
+        'priority': 1,  # Pick order
     },
     'cube_green': {
-        'type': 'cube', 
+        'type': 'cube',
         'size': 0.05,
         'initial_pos': np.array([0.50, 0.5, table_height + 0.025]),
         'target_pos': np.array([0.50, 1.0, target_table_height + 0.025]),
         'color': 'green',
-        'priority': 2
+        'priority': 2,
     },
     'cube_blue': {
         'type': 'cube',
@@ -58,7 +58,7 @@ objects = {
         'initial_pos': np.array([0.65, 0.5, table_height + 0.025]),
         'target_pos': np.array([0.65, 1.0, target_table_height + 0.025]),
         'color': 'blue',
-        'priority': 3
+        'priority': 3,
     },
     'cylinder_yellow': {
         'type': 'cylinder',
@@ -67,23 +67,23 @@ objects = {
         'initial_pos': np.array([0.50, 0.65, table_height + 0.03]),
         'target_pos': np.array([0.50, 1.15, target_table_height + 0.03]),
         'color': 'yellow',
-        'priority': 4
-    }
+        'priority': 4,
+    },
 }
 
 # Motion planning parameters
 approach_height = 0.15  # Height above object for approach
-grasp_height = 0.02     # Height offset for grasping
-lift_height = 0.20      # Height to lift after grasping
-place_height = 0.05     # Height above target before placing
+grasp_height = 0.02  # Height offset for grasping
+lift_height = 0.20  # Height to lift after grasping
+place_height = 0.05  # Height above target before placing
 
 # Velocity limits
 max_joint_velocity = 1.0  # rad/s
-max_ee_velocity = 0.3     # m/s
+max_ee_velocity = 0.3  # m/s
 
 # Control gains for Cartesian control
 kp = np.array([300, 300, 300, 30, 30, 1])  # Position gains
-kd = np.array([20, 20, 20, 5, 5, 0.5])      # Velocity gains
+kd = np.array([20, 20, 20, 5, 5, 0.5])  # Velocity gains
 
 # Gripper parameters (if using gripper)
 gripper_open_pos = 0.04
@@ -96,9 +96,15 @@ use_torque_control = True
 # World file to load
 world_name = 'pick_and_place.world'
 
+# Perception mode
+use_ground_truth = True  # Use Gazebo model_states for ground truth (set False to use camera)
+camera_topic = (
+    '/ur5/zed_node/point_cloud/cloud_registered'  # Point cloud topic for vision-based perception
+)
+
 # Gripper flag
-gripper = False
-soft_gripper = False
+gripper = True
+soft_gripper = True  # Two-fingered soft gripper
 robotiq_gripper = False
 
 # Slow factor for visualization
