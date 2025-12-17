@@ -27,47 +27,6 @@ sys.path.append(os.path.join(project_dir, 'config'))  # Add config directory
 sys.path.insert(0, os.path.join(os.environ['LOCOSIM_DIR'], 'robot_control/base_controllers'))
 from base_controller_fixed import BaseControllerFixed  # Use BaseControllerFixed instead
 
-# Import project modules
-from config.params import (  # Import from config subdirectory
-    robot_name,
-    use_ground_truth,
-    gripper_type,
-    table_initial,
-    table_final,
-    object_classes,
-    approach_height,
-    grasp_height_offset,
-    lift_height,
-    camera_topic,
-    camera_frame,
-    max_velocity,
-    max_acceleration,
-    home_joint_config,
-    min_object_points,
-    segmentation_threshold,
-)
-
-
-# Create a simple config object
-class Config:
-    def __init__(self):
-        self.robot_name = robot_name
-        self.use_ground_truth = use_ground_truth
-        self.gripper_type = gripper_type
-        self.table_initial = table_initial
-        self.table_final = table_final
-        self.object_classes = object_classes
-        self.approach_height = approach_height
-        self.grasp_height_offset = grasp_height_offset
-        self.lift_height = lift_height
-        self.camera_topic = camera_topic
-        self.camera_frame = camera_frame
-        self.max_velocity = max_velocity
-        self.max_acceleration = max_acceleration
-        self.home_joint_config = home_joint_config
-        self.min_object_points = min_object_points
-        self.segmentation_threshold = segmentation_threshold
-
 
 from perception_module import PerceptionModule
 from motion_planner_simple import MotionPlanner  # Using simplified version without IK
@@ -91,7 +50,8 @@ class PickAndPlaceController(BaseControllerFixed):  # Inherit from BaseControlle
         rospy.loginfo("Initializing Pick and Place Controller...")
 
         # Load configuration
-        self.config = Config()
+        import pick_and_place_conf as conf
+        self.config = conf
 
         # Initialize modules
         self.perception = PerceptionModule(self.config)
