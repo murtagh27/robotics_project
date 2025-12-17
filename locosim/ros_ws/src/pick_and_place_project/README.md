@@ -1,274 +1,235 @@
 # Pick and Place Project
 
-Robotic manipulation project for sorting objects using UR5 manipulator arm.
+Autonomous robotic manipulation system for sorting objects using UR5 manipulator with soft gripper.
 
 ## Quick Start
 
-### In VNC Desktop (http://localhost:6080)
-
-Open a terminal and run:
+### Launch the System
 
 ```bash
-bash /home/ubuntu/ros_ws/run_pickandplace.sh
+bash /home/ubuntu/ros_ws/run_pap.sh
 ```
 
 This will:
-1. Set up the environment
-2. Start Gazebo with the UR5 robot and pick-and-place world
+
+1. Set up the ROS environment
+2. Start Gazebo with the UR5 robot and objects
 3. Launch the interactive controller
 
-Then in the Python console that appears:
+### Basic Commands
+
+In the Python console:
+
 ```python
 p.start_task()   # Start pick and place sequence
-p.stop()         # Stop current task
-p.reset()        # Reset to initial position
+p.stop()         # Emergency stop
+p.reset()        # Reset to initial state
+p.go_home()      # Move to home position
 ```
 
-## Project Overview
+## System Overview
 
-This project implements an autonomous pick-and-place system where a robotic manipulator (UR5) picks objects from an initial table and places them in specific positions on a final table based on their class/type.
+Modular pick-and-place system with three main components working together:
 
-### Features
+1. **Perception Module** - Detects and localizes objects
+2. **Motion Planner** - Plans and executes robot movements
+3. **Task Scheduler** - Coordinates high-level task execution
 
-- **Object Detection**: Ground-truth from Gazebo or vision-based perception
-- **Motion Planning**: Inverse kinematics and smooth trajectory generation
-- **Task Scheduling**: High-level state machine for pick-place operations
-- **Gripper Control**: Support for soft gripper (optional)
+### Current Status
+
+✅ **Working:**
+
+- Ground truth object detection (4 objects: 3 cubes, 1 cylinder)
+- Task planning and sequencing
+- Joint-space motion execution
+- Gripper control
+- Full end-to-end pipeline
+
+⚠️ **In Progress:**
+
+- Inverse kinematics for accurate positioning
+- Camera-based perception
+- Collision avoidance
+- Error recovery
 
 ## Project Structure
 
 ```
 pick_and_place_project/
-├── README.md                      # This file
-├── pick_and_place_controller.py   # Main controller
-├── perception_module.py           # Object detection
-├── motion_planner.py             # Motion planning and IK
-├── task_scheduler.py             # High-level task planning
-├── config/
-│   └── params.py                 # Configuration parameters
-├── worlds/
-│   └── pick_place.world          # Gazebo world file
-└── objects/
-    └── (STL files for objects)
+├── README.md                       # Project documentation
+├── INTERFACES.md                   # Module interface specifications
+├── run_pap.sh                      # Launch script
+│
+├── pick_and_place_controller.py   # Main controller & robot interface
+├── perception_module.py            # Object detection module
+├── motion_planner_simple.py        # Motion planning (joint space)
+├── task_scheduler.py               # High-level task coordination
+├── pick_and_place_conf.py          # Configuration parameters
+├── pick_and_place.world            # Gazebo world file
+│
+├── archive/                        # Archived/unused code
+│   ├── pick_and_place_gazebo.py
+│   ├── pick_and_place_main.py
+│   └── motion_planner.py
+│
+└── config/
+    └── params.py                   # Legacy config (not used)
 ```
 
-## Installation
+## Team Collaboration
 
-### Prerequisites
+### Module Responsibilities
 
-- ROS Noetic
-- Locosim framework
-- Python 3.8+
-- Required packages: numpy, pinocchio
+See [INTERFACES.md](INTERFACES.md) for detailed interface specifications.
 
-### Setup
+**Perception Team:**
 
-1. Ensure locosim is installed and working:
-   ```bash
-   source /home/ubuntu/ros_ws/src.sh
-   ```
+- Object detection from camera
+- Point cloud segmentation
+- Object classification
+- Interface: `get_detected_objects()` → list of object dicts
 
-2. The project is located in:
-   ```
-   /home/ubuntu/ros_ws/src/locosim/robot_control/lab_exercises/pick_and_place_project/
-   ```
+**Motion Planning Team:**
 
-## Usage
+- Inverse kinematics
+- Trajectory optimization
+- Collision avoidance
+- Interface: `move_to_joints()`, `pick_object()`, `place_object()`
 
-### Running the Simulation
+**Task Scheduling Team:**
 
-1. Open a terminal in the VNC desktop (http://localhost:6080)
+- Error recovery
+- Task constraints
+- Dynamic replanning
+- Interface: `execute_task_sequence()` workflow
 
-2. Source the environment:
-   ```bash
-   source /home/ubuntu/ros_ws/src.sh
-   ```
+### Development Workflow
 
-3. Navigate to project directory:
-   ```bash
-   cd $LOCOSIM_DIR/robot_control/lab_exercises/pick_and_place_project
-   ```
+1. **Read [INTERFACES.md](INTERFACES.md)** - Understand module boundaries
+2. **Branch per module** - e.g., `feature/perception-camera`, `feature/motion-ik`
+3. **Test independently** - Each module has test commands
+4. **Integration** - Test full pipeline after changes
+5. **Document changes** - Update INTERFACES.md if signatures change
 
-4. Run the controller:
-   ```bash
-   python3 -i pick_and_place_controller.py
-   ```
+### Testing Individual Modules
 
-5. In the Python interactive console, start the task:
-   ```python
-   p.start_task()
-   ```
+```python
+# Start system
+bash run_pap.sh
 
-### Available Commands
+# Test perception
+>>> objects = p.perception.get_detected_objects()
+>>> print(f"Found {len(objects)} objects")
 
-- `p.start_task()` - Start the pick and place sequence
-- `p.stop()` - Emergency stop
-- `p.reset()` - Reset to initial state
-- `p.go_home()` - Move robot to home position
-- `p.perception.get_detected_objects()` - See detected objects
-- `p.task_scheduler.get_progress()` - Check task progress
+# Test motion
+>>> p.motion_planner.move_to_joints(p.config.home_joint_config, p)
+
+# Test full sequence
+>>> p.start_task()
+```
 
 ## Configuration
 
-Edit `config/params.py` to customize:
+Edit `pick_and_place_conf.py` to adjust:
 
-- Object classes and their target positions
-- Table dimensions and positions
-- Motion planning parameters (speed, acceleration)
-- Perception settings
-- Gripper type
+- **Object definitions** - Initial and target positions
+- **Motion parameters** - Speeds, heights, thresholds
+- **Perception settings** - Ground truth vs camera, topics
+- **Gripper settings** - Open/close values
 
-### Example Configuration
+## Architecture
 
-```python
-# Define objects
-object_classes = {
-    'cube_red': {
-        'size': [0.05, 0.05, 0.05],
-        'final_position': [0.4, 0.2, 0.02]
-    },
-    # Add more objects...
-}
-
-# Motion parameters
-approach_height = 0.15  # Height above object before grasping
-max_velocity = 0.5      # Maximum end-effector velocity
+```
+┌─────────────────────────────────────────────────────────┐
+│          Pick and Place Controller                      │
+│  - ROS node initialization                              │
+│  - Robot interface (joints, gripper)                    │
+│  - Gazebo simulation management                         │
+└──────────────┬──────────────┬──────────────┬────────────┘
+               │              │              │
+       ┌───────▼──────┐  ┌───▼──────┐  ┌───▼───────────┐
+       │  Perception  │  │  Motion  │  │ Task Scheduler│
+       │              │  │ Planner  │  │               │
+       │ - Detect     │  │ - IK     │  │ - State       │
+       │ - Localize   │  │ - Plan   │  │   machine     │
+       │ - Classify   │  │ - Execute│  │ - Sequence    │
+       └──────────────┘  └──────────┘  └───────────────┘
 ```
 
-## Development
+## Key Features
 
-### Adding New Objects
+### Perception Module (`perception_module.py`)
 
-1. Define object class in `config/params.py`:
-   ```python
-   'my_object': {
-       'color': [R, G, B, A],
-       'size': [x, y, z],
-       'final_position': [x, y, z]
-   }
-   ```
+- **Ground truth mode**: Uses Gazebo `/gazebo/model_states` topic
+- **Vision mode**: Point cloud processing (to be implemented)
+- **Output**: List of detected objects with positions and classes
 
-2. Add STL model to `objects/` folder (optional)
+### Motion Planner (`motion_planner_simple.py`)
 
-3. Update perception module to detect/classify new object
+- **Current**: Hardcoded joint waypoints with linear interpolation
+- **Planned**: IK-based motion planning with actual object coordinates
+- **Methods**: `move_to_joints()`, `pick_object()`, `place_object()`
 
-### Implementing Camera-Based Perception
+### Task Scheduler (`task_scheduler.py`)
 
-Currently uses ground truth from Gazebo. To use camera:
-
-1. Set in `config/params.py`:
-   ```python
-   use_ground_truth = False
-   ```
-
-2. Implement clustering in `perception_module.py`:
-   - Use DBSCAN or Euclidean clustering
-   - Extract object features (color, geometry)
-   - Classify based on features
-
-3. Add camera sensor to world file
-
-### Improving Motion Planning
-
-The current IK solver is basic. For better performance:
-
-- Use MoveIt! for collision-aware planning
-- Implement trajectory optimization
-- Add velocity/acceleration profiling
-
-## Testing
-
-### Unit Tests
-
-Test individual components:
-
-```python
-# Test perception
-python3 -c "from perception_module import PerceptionModule; ..."
-
-# Test motion planning
-python3 -c "from motion_planner import MotionPlanner; ..."
-```
-
-### Integration Testing
-
-Run full pick-place sequence and verify:
-- All objects are detected correctly
-- Robot reaches each object successfully
-- Objects are placed in correct positions
-- No collisions occur
+- **State machine** for coordinating pick-place workflow
+- **Sequence**: Detect → Plan → Pick → Place → Repeat
+- **States**: IDLE, DETECTING, PLANNING, MOVING_TO_OBJECT, PICKING, MOVING_TO_TARGET, PLACING, RETURNING_HOME, COMPLETED
 
 ## Troubleshooting
 
-### Common Issues
+### Robot not moving
 
-**Robot doesn't move:**
-- Check ROS master is running: `rostopic list`
-- Verify joint commands: `rostopic echo /ur5/joint_group_pos_controller/command`
+- Check if Gazebo is running: `rosnode list | grep gazebo`
+- Verify `/command` topic: `rostopic info /command`
+- Check for errors: `rostopic echo /rosout | grep ERROR`
 
-**Objects not detected:**
-- Check Gazebo models are spawned: `rostopic echo /gazebo/model_states`
-- Verify perception module: `p.perception.get_detected_objects()`
+### Objects not detected
 
-**IK fails:**
-- Target might be out of reach
-- Check joint limits in params.py
-- Verify end-effector orientation
+- Verify ground truth mode: Check `use_ground_truth = True` in config
+- Check model states: `rostopic echo /gazebo/model_states`
+- Test perception: `p.perception.get_detected_objects()`
 
-**Gripper doesn't close:**
-- Check gripper type in config matches simulation
-- Implement gripper control in `send_gripper_command()`
+### Simulation crashes
 
-## Report Guidelines
+- Increase Gazebo's real-time factor in world file
+- Reduce control loop frequency
+- Check system resources: `htop`
 
-Your project report should include:
+## Development Tips
 
-### 1. Perception (1-2 pages)
-- Object detection algorithm
-- Segmentation method
-- Classification approach
-- Results with sample images
+### Adding New Objects
 
-### 2. Motion Planning (1-2 pages)
-- Inverse kinematics approach
-- Trajectory generation method
-- Collision avoidance strategy
-- Sample trajectories with plots
+1. Edit `pick_and_place.world` - Add model definition
+2. Edit `pick_and_place_conf.py` - Add to `object_classes` dict
+3. Restart simulation
 
-### 3. Task Planning (1-2 pages)
-- High-level algorithm
-- State machine description
-- Sequencing logic
-- Performance metrics
+### Tuning Motion
 
-### 4. Results (1 page)
-- Success rate
-- Execution time
-- Error analysis
-- Future improvements
+1. Adjust waypoints in `motion_planner_simple.py`
+2. Change durations for smoother/faster motion
+3. Test with single object first
 
-## Documentation
+### Debugging
 
-Generate Doxygen documentation:
+```python
+# Enable debug logging
+>>> import rospy
+>>> rospy.set_param('/rosout/level', 'DEBUG')
 
-```bash
-cd /path/to/pick_and_place_project
-doxygen Doxyfile  # (create Doxyfile first)
+# Check current state
+>>> p.task_scheduler.current_state
+>>> p.perception.get_detected_objects()
+>>> p.get_current_joint_state()
 ```
-
-## Contributors
-
-- [Your Name]
-- [Team Member 2]
-- [Team Member 3]
-- [Team Member 4]
-
-## License
-
-Educational project for Fundamental Robotics course.
 
 ## References
 
-- Locosim: https://github.com/idra-lab/locosim
-- Pinocchio: https://github.com/stack-of-tasks/pinocchio
+- [Locosim Documentation](https://github.com/mfocchi/locosim)
+- [UR5 Robot Specs](https://www.universal-robots.com/products/ur5-robot/)
 - ROS Noetic: http://wiki.ros.org/noetic
+- Gazebo Classic: http://gazebosim.org/
+
+## License
+
+Educational project for robotics course.
