@@ -24,16 +24,19 @@ This document defines the interfaces between the three main modules: **Perceptio
 ## 1. Perception Module (`perception_module.py`)
 
 ### Purpose
+
 Detects and localizes objects in the workspace using either ground truth (Gazebo) or camera-based perception.
 
 ### Interface
 
 #### Initialization
+
 ```python
 perception = PerceptionModule(config)
 ```
 
 **Parameters:**
+
 - `config`: Configuration object with attributes:
   - `use_ground_truth` (bool): If True, use Gazebo model states
   - `camera_topic` (str): ROS topic for point cloud (if not using ground truth)
@@ -43,9 +46,11 @@ perception = PerceptionModule(config)
 #### Key Methods
 
 ##### `update_ground_truth(gazebo_model_states)`
+
 Update detected objects from Gazebo ground truth.
 
 **Input:**
+
 - `gazebo_model_states` (gazebo_msgs/ModelStates): Gazebo model states message
 
 **Returns:** List of detected objects
@@ -55,9 +60,11 @@ Update detected objects from Gazebo ground truth.
 ---
 
 ##### `get_detected_objects()`
+
 Get list of currently detected objects.
 
 **Returns:** List of dictionaries, each containing:
+
 ```python
 {
     'name': str,           # Object name (e.g., 'cube_red')
@@ -67,6 +74,7 @@ Get list of currently detected objects.
 ```
 
 **Example:**
+
 ```python
 objects = perception.get_detected_objects()
 # Returns: [
@@ -94,16 +102,19 @@ To implement camera-based perception, modify these methods:
 ## 2. Motion Planner (`motion_planner_simple.py`)
 
 ### Purpose
+
 Plans and executes robot arm movements in joint space.
 
 ### Interface
 
 #### Initialization
+
 ```python
 motion_planner = MotionPlanner(controller, config)
 ```
 
 **Parameters:**
+
 - `controller`: PickAndPlaceController instance
 - `config`: Configuration object with:
   - `home_joint_config` (np.array): Home joint positions [6]
@@ -113,9 +124,11 @@ motion_planner = MotionPlanner(controller, config)
 #### Key Methods
 
 ##### `move_to_joints(target_joints, controller, duration=3.0)`
+
 Move robot to target joint configuration with linear interpolation.
 
 **Input:**
+
 - `target_joints` (np.array): Target joint angles [6] in radians
 - `controller`: Controller instance
 - `duration` (float): Movement duration in seconds
@@ -127,9 +140,11 @@ Move robot to target joint configuration with linear interpolation.
 ---
 
 ##### `pick_object(object_pos, controller)`
+
 Execute pick sequence: approach → grasp → lift.
 
 **Input:**
+
 - `object_pos` (np.array): Object position [x, y, z] in meters
 - `controller`: Controller instance
 
@@ -138,6 +153,7 @@ Execute pick sequence: approach → grasp → lift.
 **Called by:** TaskScheduler.execute_pick()
 
 **Sequence:**
+
 1. Move to approach position (above object)
 2. Move down to grasp position
 3. Close gripper
@@ -146,9 +162,11 @@ Execute pick sequence: approach → grasp → lift.
 ---
 
 ##### `place_object(target_pos, controller)`
+
 Execute place sequence: approach → place → release → lift.
 
 **Input:**
+
 - `target_pos` (np.array): Target position [x, y, z] in meters
 - `controller`: Controller instance
 
@@ -157,6 +175,7 @@ Execute place sequence: approach → place → release → lift.
 **Called by:** TaskScheduler.execute_place()
 
 **Sequence:**
+
 1. Move to approach position (above target)
 2. Move down to place position
 3. Open gripper
@@ -177,16 +196,19 @@ Current implementation uses hardcoded joint waypoints. To add IK:
 ## 3. Task Scheduler (`task_scheduler.py`)
 
 ### Purpose
+
 High-level task planning and execution using a state machine.
 
 ### Interface
 
 #### Initialization
+
 ```python
 task_scheduler = TaskScheduler(perception, motion_planner, robot_interface, config)
 ```
 
 **Parameters:**
+
 - `perception`: PerceptionModule instance
 - `motion_planner`: MotionPlanner instance
 - `robot_interface`: Controller instance
@@ -195,9 +217,11 @@ task_scheduler = TaskScheduler(perception, motion_planner, robot_interface, conf
 #### Key Methods
 
 ##### `detect_and_plan()`
+
 Detect objects and create pick-place task sequence.
 
 **Returns:** List of task dictionaries:
+
 ```python
 [
     {
@@ -214,6 +238,7 @@ Detect objects and create pick-place task sequence.
 ---
 
 ##### `execute_task_sequence()`
+
 Execute the full pick-and-place sequence for all objects.
 
 **Returns:** bool (True if all tasks completed successfully)
@@ -221,6 +246,7 @@ Execute the full pick-and-place sequence for all objects.
 **Called by:** Controller.start_task()
 
 **Flow:**
+
 1. DETECTING_OBJECTS: Call detect_and_plan()
 2. PLANNING_SEQUENCE: Validate tasks
 3. For each task:
@@ -266,23 +292,28 @@ The controller provides robot interface methods used by motion planner and task 
 ### Key Methods
 
 ##### `send_joint_command(joints, velocities=None)`
+
 Send joint position command to robot.
 
 **Input:**
+
 - `joints` (np.array): Joint positions [6] or [8] (with gripper)
 - `velocities` (np.array, optional): Joint velocities
 
 ---
 
 ##### `send_gripper_command(width)`
+
 Control gripper opening.
 
 **Input:**
+
 - `width` (float): Gripper opening in meters (0.0 = closed, 0.085 = open)
 
 ---
 
 ##### `get_current_joint_state()`
+
 Get current robot joint positions and velocities.
 
 **Returns:** tuple (positions, velocities), each np.array[8]
@@ -326,18 +357,21 @@ lift_height = 0.20
 ### Team Responsibilities
 
 #### Perception Team:
+
 - Implement camera-based object detection
 - Add object classification (color, shape)
 - Improve robustness to lighting/occlusions
 - **Interface to maintain:** `get_detected_objects()` return format
 
 #### Motion Planning Team:
+
 - Implement inverse kinematics
 - Add trajectory optimization
 - Implement collision avoidance
 - **Interface to maintain:** Method signatures for `move_to_joints()`, `pick_object()`, `place_object()`
 
 #### Task Scheduling Team:
+
 - Add error recovery logic
 - Implement task constraints
 - Add dynamic replanning
@@ -373,6 +407,7 @@ bash run_pap.sh
 - **Controller → Perception**: Ground truth via `update_ground_truth()` callback
 
 All modules should:
+
 - Handle errors gracefully
 - Log status using `rospy.loginfo/warn/err()`
 - Return boolean success indicators where applicable
