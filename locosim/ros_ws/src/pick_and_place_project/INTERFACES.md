@@ -99,7 +99,7 @@ To implement camera-based perception, modify these methods:
 
 ---
 
-## 2. Motion Planner (`motion_planner_simple.py`)
+## 2. Motion Planner (`motion_planner.py`)
 
 ### Purpose
 
@@ -383,7 +383,7 @@ Each module can be tested independently:
 
 ```python
 # Start the system
-bash run_pap.sh
+bash run_papa.sh
 
 # In Python interactive mode:
 # Test perception

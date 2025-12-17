@@ -29,7 +29,7 @@ from base_controller_fixed import BaseControllerFixed  # Use BaseControllerFixed
 
 
 from perception_module import PerceptionModule
-from motion_planner_simple import MotionPlanner  # Using simplified version without IK
+from motion_planner import MotionPlanner
 from task_scheduler import TaskScheduler
 
 

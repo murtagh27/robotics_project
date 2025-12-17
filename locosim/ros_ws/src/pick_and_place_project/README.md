@@ -7,7 +7,7 @@ Autonomous robotic manipulation system for sorting objects using UR5 manipulator
 ### Launch the System
 
 ```bash
-bash /home/ubuntu/ros_ws/run_pap.sh
+bash /home/ubuntu/ros_ws/run_papa.sh
 ```
 
 This will:
@@ -58,11 +58,11 @@ Modular pick-and-place system with three main components working together:
 pick_and_place_project/
 ├── README.md                       # Project documentation
 ├── INTERFACES.md                   # Module interface specifications
-├── run_pap.sh                      # Launch script
+├── run_papa.sh                     # Launch script
 │
-├── pick_and_place_controller.py   # Main controller & robot interface
+├── controller.py                   # Main controller & robot interface
 ├── perception_module.py            # Object detection module
-├── motion_planner_simple.py        # Motion planning (joint space)
+├── motion_planner.py               # Motion planning (joint space)
 ├── task_scheduler.py               # High-level task coordination
 ├── pick_and_place_conf.py          # Configuration parameters
 ├── pick_and_place.world            # Gazebo world file
@@ -115,7 +115,7 @@ See [INTERFACES.md](INTERFACES.md) for detailed interface specifications.
 
 ```python
 # Start system
-bash run_pap.sh
+bash run_papa.sh
 
 # Test perception
 >>> objects = p.perception.get_detected_objects()
@@ -164,7 +164,7 @@ Edit `pick_and_place_conf.py` to adjust:
 - **Vision mode**: Point cloud processing (to be implemented)
 - **Output**: List of detected objects with positions and classes
 
-### Motion Planner (`motion_planner_simple.py`)
+### Motion Planner (`motion_planner.py`)
 
 - **Current**: Hardcoded joint waypoints with linear interpolation
 - **Planned**: IK-based motion planning with actual object coordinates
@@ -206,7 +206,7 @@ Edit `pick_and_place_conf.py` to adjust:
 
 ### Tuning Motion
 
-1. Adjust waypoints in `motion_planner_simple.py`
+1. Adjust waypoints in `motion_planner.py`
 2. Change durations for smoother/faster motion
 3. Test with single object first
 
