@@ -33,9 +33,21 @@ from motion_planner import MotionPlanner
 from task_scheduler import TaskScheduler
 
 
-class PapaController(BaseControllerFixed):  # Inherit from BaseControllerFixed
+class PapaController(BaseControllerFixed):
     """
     PAPA (Pick and Place Automation) - Main Controller
+
+    Orchestrates perception, motion planning, and task scheduling for
+    autonomous pick and place operations using a UR5 robot with soft gripper.
+
+    Inherits from BaseControllerFixed for low-level robot control capabilities.
+
+    Attributes:
+        config: Configuration module with robot and task parameters
+        perception: PerceptionModule for object detection
+        motion_planner: MotionPlanner for trajectory generation
+        task_scheduler: TaskScheduler for high-level task coordination
+        task_running: Flag indicating if task is currently executing
     """
 
     def __init__(self):
@@ -56,7 +68,6 @@ class PapaController(BaseControllerFixed):  # Inherit from BaseControllerFixed
 
         # Initialize modules
         self.perception = PerceptionModule(self.config)
-        # Pass controller instance to motion planner instead of self.robot
         self.motion_planner = MotionPlanner(self, self.config)
         self.task_scheduler = TaskScheduler(self.perception, self.motion_planner, self, self.config)
 
@@ -86,18 +97,23 @@ class PapaController(BaseControllerFixed):  # Inherit from BaseControllerFixed
         super().startSimulator(world_name=conf.world_name, additional_args=additional_args)
 
     def initVars(self):
-        """Initialize variables after simulator starts"""
+        """
+        Initialize robot state variables and ROS communication.
+
+        Sets up joint state arrays (8 joints: 6 arm + 2 gripper), creates
+        publishers for joint commands, and subscribes to ground truth if enabled.
+        Called after Gazebo simulation has started.
+        """
         import config as conf
 
-        # Don't call super().initVars() since we don't have robot model loaded
-        # Manually initialize what we need (8 joints: 6 arm + 2 gripper)
-        self.q_des = np.concatenate([conf.q0, np.zeros(2)])  # Add gripper joints
-        self.qd_des = np.zeros(8)  # 6 arm + 2 gripper
+        # Initialize joint state arrays for 8 joints (6 arm + 2 gripper)
+        self.q_des = np.concatenate([conf.q0, np.zeros(2)])  # desired positions
 
         # Initialize state variables that base controller expects
-        self.q = np.zeros(8)
-        self.qd = np.zeros(8)
-        self.tau_ffwd = np.zeros(8)
+        self.qd_des = np.zeros(8)  # desired velocities
+        self.q = np.zeros(8)  # current positions
+        self.qd = np.zeros(8)  # current velocities
+        self.tau_ffwd = np.zeros(8)  # torques
 
         # Track gripper state
         self.gripper_pos = 0.0
@@ -121,7 +137,13 @@ class PapaController(BaseControllerFixed):  # Inherit from BaseControllerFixed
         rospy.loginfo("Variables initialized")
 
     def model_states_callback(self, msg):
-        """Callback for Gazebo model states (ground truth)"""
+        """
+        Process Gazebo model states for ground truth perception.
+
+        Args:
+            msg (gazebo_msgs/ModelStates): Gazebo model states message containing
+                positions and orientations of all models in simulation.
+        """
         rospy.logdebug(f"model_states_callback triggered with {len(msg.name)} models")
         if self.config.use_ground_truth:
             rospy.logdebug(f"Models in callback: {msg.name}")
@@ -129,7 +151,15 @@ class PapaController(BaseControllerFixed):  # Inherit from BaseControllerFixed
             rospy.loginfo_once(f"Ground truth callback working! Found {len(msg.name)} models")
 
     def test_model_states(self):
-        """Diagnostic: Test if model_states topic is working"""
+        """
+        Diagnostic tool to verify Gazebo model_states communication.
+
+        Attempts to receive a single message from /gazebo/model_states topic
+        and update perception module. Useful for debugging perception issues.
+
+        Raises:
+            rospy.ROSException: If unable to receive message within timeout.
+        """
         rospy.loginfo("Testing /gazebo/model_states topic...")
         try:
             from gazebo_msgs.msg import ModelStates
@@ -147,7 +177,12 @@ class PapaController(BaseControllerFixed):  # Inherit from BaseControllerFixed
             rospy.logerr(f"FAILED to receive model_states: {e}")
 
     def start_task(self):
-        """Start the pick and place task"""
+        """
+        Execute the complete pick and place task sequence.
+
+        Coordinates perception, planning, and execution phases. Handles errors
+        gracefully and ensures task_running flag is reset on completion.
+        """
         if self.task_running:
             rospy.logwarn("Task is already running!")
             return
@@ -206,10 +241,16 @@ class PapaController(BaseControllerFixed):  # Inherit from BaseControllerFixed
 
     def send_des_jstate(self, q_des, qd_des, tau_ffwd):
         """
-        Override base controller's send_des_jstate to use position controller
-        """
-        from std_msgs.msg import Float64MultiArray
+        Send desired joint states to Gazebo via /command topic.
 
+        Overrides base controller method to publish directly to Gazebo's
+        position controller instead of using torque control.
+
+        Args:
+            q_des (np.ndarray): Desired joint positions (8 elements)
+            qd_des (np.ndarray): Desired joint velocities (8 elements)
+            tau_ffwd (np.ndarray): Feedforward torques (8 elements)
+        """
         # Update internal state
         self.q_des = q_des.copy()
         self.qd_des = qd_des.copy()
@@ -226,8 +267,14 @@ class PapaController(BaseControllerFixed):  # Inherit from BaseControllerFixed
 
     def send_joint_command(self, joints, velocities=None):
         """
-        Send joint position commands to robot
-        Interface for motion planner
+        Send joint position commands to robot.
+
+        Primary interface for motion planner to command robot motion.
+        Automatically pads 6-joint commands to 8 joints by adding gripper state.
+
+        Args:
+            joints (np.ndarray): Target joint positions (6 or 8 elements)
+            velocities (np.ndarray, optional): Target joint velocities. Defaults to zero.
         """
         # Pad to 8 joints if only 6 provided (add gripper)
         if len(joints) == 6:
@@ -250,9 +297,14 @@ class PapaController(BaseControllerFixed):  # Inherit from BaseControllerFixed
 
     def send_gripper_command(self, width):
         """
-        Send gripper command
-        width: desired gripper opening (meters)
-        For soft gripper: 0.0 = closed, 0.085 = fully open
+        Command gripper opening width.
+
+        Args:
+            width (float): Desired gripper opening in meters.
+                For soft gripper: 0.0 = fully closed, 0.085 = fully open
+
+        Note:
+            Blocks for 1.5 seconds to allow gripper to complete motion.
         """
         from std_msgs.msg import Float64
 
@@ -270,7 +322,12 @@ class PapaController(BaseControllerFixed):  # Inherit from BaseControllerFixed
         rospy.sleep(1.5)  # Wait for gripper to actuate
 
     def get_current_joint_state(self):
-        """Get current joint positions and velocities"""
+        """
+        Retrieve current robot joint state.
+
+        Returns:
+            tuple: (positions, velocities) where each is an 8-element np.ndarray
+        """
         return self.q.copy(), self.qd.copy()
 
     def run(self):
@@ -283,12 +340,22 @@ class PapaController(BaseControllerFixed):  # Inherit from BaseControllerFixed
 
             # Task scheduler handles high-level control
             # Low-level control is handled by send_joint_command
-
             rate.sleep()
 
 
 def main():
-    """Main function"""
+    """
+    Initialize and start PAPA controller.
+
+    Creates controller instance, starts Gazebo simulation, and initializes
+    all subsystems. Returns controller object for interactive use.
+
+    Returns:
+        PapaController: Initialized controller instance
+
+    Raises:
+        rospy.ROSInterruptException: If ROS shutdown is requested
+    """
     import rospkg
     import base_controllers.params as base_conf
 
