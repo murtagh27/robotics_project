@@ -50,9 +50,9 @@ class PapaController(BaseControllerFixed):  # Inherit from BaseControllerFixed
         rospy.loginfo("Initializing PAPA Controller...")
 
         # Load configuration
-        import conf
+        import config
 
-        self.config = conf
+        self.config = config
 
         # Initialize modules
         self.perception = PerceptionModule(self.config)
@@ -75,7 +75,7 @@ class PapaController(BaseControllerFixed):  # Inherit from BaseControllerFixed
     def startSimulator(self):
         """Start the Gazebo simulation with PAPA world"""
         # Import config values
-        import conf
+        import config as conf
 
         additional_args = [
             f'gripper:={str(conf.gripper).lower()}',
@@ -87,7 +87,7 @@ class PapaController(BaseControllerFixed):  # Inherit from BaseControllerFixed
 
     def initVars(self):
         """Initialize variables after simulator starts"""
-        import conf
+        import config as conf
 
         # Don't call super().initVars() since we don't have robot model loaded
         # Manually initialize what we need (8 joints: 6 arm + 2 gripper)

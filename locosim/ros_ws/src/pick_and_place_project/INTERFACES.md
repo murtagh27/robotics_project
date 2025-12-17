@@ -320,7 +320,7 @@ Get current robot joint positions and velocities.
 
 ---
 
-## 5. Configuration (`pick_and_place_conf.py`)
+## 5. Configuration (`config.py`)
 
 Shared configuration used by all modules:
 

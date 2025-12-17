@@ -64,7 +64,7 @@ pick_and_place_project/
 ├── perception_module.py            # Object detection module
 ├── motion_planner.py               # Motion planning (joint space)
 ├── task_scheduler.py               # High-level task coordination
-├── pick_and_place_conf.py          # Configuration parameters
+├── config.py                       # Configuration parameters
 ├── pick_and_place.world            # Gazebo world file
 │
 ├── archive/                        # Archived/unused code
@@ -130,7 +130,7 @@ bash run_papa.sh
 
 ## Configuration
 
-Edit `pick_and_place_conf.py` to adjust:
+Edit `config.py` to adjust:
 
 - **Object definitions** - Initial and target positions
 - **Motion parameters** - Speeds, heights, thresholds
@@ -200,8 +200,8 @@ Edit `pick_and_place_conf.py` to adjust:
 
 ### Adding New Objects
 
-1. Edit `pick_and_place.world` - Add model definition
-2. Edit `pick_and_place_conf.py` - Add to `object_classes` dict
+1. Edit `papa.world` - Add model definition
+2. Edit `config.py` - Add to `object_classes` dict
 3. Restart simulation
 
 ### Tuning Motion
