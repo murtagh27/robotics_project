@@ -8,15 +8,15 @@ This document defines the interfaces between the three main modules: **Perceptio
 ┌─────────────────────────────────────────────────────────┐
 │          PAPA Controller                                │
 │  (controller.py)                                        │
-│  - Main orchestrator                                     │
+│  - Main orchestrator                                    │
 │  - ROS node initialization                              │
-│  - Robot interface                                       │
+│  - Robot interface                                      │
 └──────────────┬──────────────┬──────────────┬────────────┘
                │              │              │
-       ┌───────▼──────┐  ┌───▼──────┐  ┌───▼───────────┐
-       │  Perception  │  │  Motion  │  │ Task Scheduler│
-       │   Module     │  │ Planner  │  │               │
-       └──────────────┘  └──────────┘  └───────────────┘
+       ┌───────▼──────┐   ┌───▼──────┐   ┌───▼───────────┐
+       │  Perception  │   │  Motion  │   │     Task      │
+       │    Module    │   │ Planner  │   │   Scheduler   │
+       └──────────────┘   └──────────┘   └───────────────┘
 ```
 
 ---
@@ -227,7 +227,7 @@ Detect objects and create pick-place task sequence.
     {
         'object': dict,      # Object from perception
         'target': np.array,  # Target position [x, y, z]
-        'class': str        # Object class
+        'class': str         # Object class
     },
     ...
 ]
@@ -268,7 +268,7 @@ DETECTING_OBJECTS
   ↓
 PLANNING_SEQUENCE
   ↓
-MOVING_TO_OBJECT ←──┐
+MOVING_TO_OBJECT ←───┐
   ↓                  │
 PICKING              │
   ↓                  │
@@ -356,21 +356,21 @@ lift_height = 0.20
 
 ### Team Responsibilities
 
-#### Perception Team:
+#### Perception Team
 
 - Implement camera-based object detection
+- Point cloud segmentation
 - Add object classification (color, shape)
-- Improve robustness to lighting/occlusions
 - **Interface to maintain:** `get_detected_objects()` return format
 
-#### Motion Planning Team:
+#### Motion Planning Team
 
 - Implement inverse kinematics
 - Add trajectory optimization
 - Implement collision avoidance
 - **Interface to maintain:** Method signatures for `move_to_joints()`, `pick_object()`, `place_object()`
 
-#### Task Scheduling Team:
+#### Task Scheduling Team
 
 - Add error recovery logic
 - Implement task constraints
@@ -395,6 +395,9 @@ bash run_papa.sh
 
 # Test task scheduling
 >>> p.task_scheduler.execute_task_sequence()
+
+# Test full sequence
+>>> p.start_task()
 ```
 
 ---

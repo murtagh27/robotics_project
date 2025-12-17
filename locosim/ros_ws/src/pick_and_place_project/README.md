@@ -65,15 +65,15 @@ pick_and_place_project/
 ├── motion_planner.py               # Motion planning (joint space)
 ├── task_scheduler.py               # High-level task coordination
 ├── config.py                       # Configuration parameters
-├── pick_and_place.world            # Gazebo world file
+├── papa.world                      # Gazebo world file
 │
-├── archive/                        # Archived/unused code
-│   ├── pick_and_place_gazebo.py
-│   ├── pick_and_place_main.py
-│   └── motion_planner.py
-│
-└── config/
-    └── params.py                   # Legacy config (not used)
+└── archive/                        # Archived/unused code
+    ├── pick_and_place_gazebo.py
+    ├── pick_and_place_main.py
+    ├── motion_planner.py
+    └── config/
+        └── params.py               # Legacy config (not used)
+
 ```
 
 ## Team Collaboration
@@ -82,27 +82,6 @@ pick_and_place_project/
 
 See [INTERFACES.md](INTERFACES.md) for detailed interface specifications.
 
-**Perception Team:**
-
-- Object detection from camera
-- Point cloud segmentation
-- Object classification
-- Interface: `get_detected_objects()` → list of object dicts
-
-**Motion Planning Team:**
-
-- Inverse kinematics
-- Trajectory optimization
-- Collision avoidance
-- Interface: `move_to_joints()`, `pick_object()`, `place_object()`
-
-**Task Scheduling Team:**
-
-- Error recovery
-- Task constraints
-- Dynamic replanning
-- Interface: `execute_task_sequence()` workflow
-
 ### Development Workflow
 
 1. **Read [INTERFACES.md](INTERFACES.md)** - Understand module boundaries
@@ -110,23 +89,6 @@ See [INTERFACES.md](INTERFACES.md) for detailed interface specifications.
 3. **Test independently** - Each module has test commands
 4. **Integration** - Test full pipeline after changes
 5. **Document changes** - Update INTERFACES.md if signatures change
-
-### Testing Individual Modules
-
-```python
-# Start system
-bash run_papa.sh
-
-# Test perception
->>> objects = p.perception.get_detected_objects()
->>> print(f"Found {len(objects)} objects")
-
-# Test motion
->>> p.motion_planner.move_to_joints(p.config.home_joint_config, p)
-
-# Test full sequence
->>> p.start_task()
-```
 
 ## Configuration
 
@@ -141,19 +103,19 @@ Edit `config.py` to adjust:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│          Pick and Place Controller                      │
+│          PAPA Controller                                │
 │  - ROS node initialization                              │
 │  - Robot interface (joints, gripper)                    │
 │  - Gazebo simulation management                         │
 └──────────────┬──────────────┬──────────────┬────────────┘
                │              │              │
-       ┌───────▼──────┐  ┌───▼──────┐  ┌───▼───────────┐
-       │  Perception  │  │  Motion  │  │ Task Scheduler│
-       │              │  │ Planner  │  │               │
-       │ - Detect     │  │ - IK     │  │ - State       │
-       │ - Localize   │  │ - Plan   │  │   machine     │
-       │ - Classify   │  │ - Execute│  │ - Sequence    │
-       └──────────────┘  └──────────┘  └───────────────┘
+       ┌───────▼──────┐   ┌───▼──────┐   ┌───▼───────────┐
+       │  Perception  │   │  Motion  │   │ Task Scheduler│
+       │              │   │ Planner  │   │               │
+       │ - Detect     │   │ - IK     │   │ - State       │
+       │ - Localize   │   │ - Plan   │   │   machine     │
+       │ - Classify   │   │ - Execute│   │ - Sequence    │
+       └──────────────┘   └──────────┘   └───────────────┘
 ```
 
 ## Key Features
@@ -227,8 +189,8 @@ Edit `config.py` to adjust:
 
 - [Locosim Documentation](https://github.com/mfocchi/locosim)
 - [UR5 Robot Specs](https://www.universal-robots.com/products/ur5-robot/)
-- ROS Noetic: http://wiki.ros.org/noetic
-- Gazebo Classic: http://gazebosim.org/
+- [ROS Noetic](http://wiki.ros.org/noetic)
+- [Gazebo Classic](http://gazebosim.org/)
 
 ## License
 
