@@ -129,21 +129,22 @@ class PickAndPlaceController(BaseControllerFixed):  # Inherit from BaseControlle
         import pick_and_place_conf as conf
 
         # Don't call super().initVars() since we don't have robot model loaded
-        # Manually initialize what we need
-        self.q_des = conf.q0.copy()
-        self.qd_des = np.zeros(6)  # UR5 has 6 joints
+        # Manually initialize what we need (8 joints: 6 arm + 2 gripper)
+        self.q_des = np.concatenate([conf.q0, np.zeros(2)])  # Add gripper joints
+        self.qd_des = np.zeros(8)  # 6 arm + 2 gripper
 
         # Initialize state variables that base controller expects
-        self.q = np.zeros(6)
-        self.qd = np.zeros(6)
-        self.tau_ffwd = np.zeros(6)
+        self.q = np.zeros(8)
+        self.qd = np.zeros(8)
+        self.tau_ffwd = np.zeros(8)
 
-        # Create publisher for desired joint states
-        from std_msgs.msg import Float64MultiArray
+        # Track gripper state
+        self.gripper_pos = 0.0
 
-        self.pub_des_jstate = rospy.Publisher(
-            "/ur5/joint_group_pos_controller/command", Float64MultiArray, queue_size=1
-        )
+        # Create publisher for desired joint states (Gazebo listens on /command)
+        from sensor_msgs.msg import JointState
+
+        self.pub_des_jstate = rospy.Publisher("/command", JointState, queue_size=1)
         rospy.sleep(0.5)  # Wait for publisher to connect
 
         # Now that Gazebo is running, subscribe to model states for ground truth
@@ -242,17 +243,46 @@ class PickAndPlaceController(BaseControllerFixed):  # Inherit from BaseControlle
         rospy.loginfo("Moving to home position...")
         self.motion_planner.move_to_joints(np.array(self.config.home_joint_config), self)
 
+    def send_des_jstate(self, q_des, qd_des, tau_ffwd):
+        """
+        Override base controller's send_des_jstate to use position controller
+        """
+        from std_msgs.msg import Float64MultiArray
+
+        # Update internal state
+        self.q_des = q_des.copy()
+        self.qd_des = qd_des.copy()
+        self.tau_ffwd = tau_ffwd.copy()
+
+        # Publish JointState to /command (where Gazebo listens)
+        from sensor_msgs.msg import JointState
+
+        msg = JointState()
+        msg.position = q_des.tolist()
+        msg.velocity = qd_des.tolist()
+        msg.effort = tau_ffwd.tolist()
+        self.pub_des_jstate.publish(msg)
+
     def send_joint_command(self, joints, velocities=None):
         """
         Send joint position commands to robot
         Interface for motion planner
         """
-        # Update desired joint states
-        self.q_des = joints.copy()
-        if velocities is not None:
-            self.qd_des = velocities.copy()
+        # Pad to 8 joints if only 6 provided (add gripper)
+        if len(joints) == 6:
+            joints_full = np.concatenate([joints, [self.gripper_pos, self.gripper_pos]])
         else:
-            self.qd_des = np.zeros_like(joints)
+            joints_full = joints.copy()
+
+        # Update desired joint states
+        self.q_des = joints_full
+        if velocities is not None:
+            if len(velocities) == 6:
+                self.qd_des = np.concatenate([velocities, [0.0, 0.0]])
+            else:
+                self.qd_des = velocities.copy()
+        else:
+            self.qd_des = np.zeros(8)
 
         # Send commands through base controller
         self.send_des_jstate(self.q_des, self.qd_des, self.tau_ffwd)
@@ -264,6 +294,9 @@ class PickAndPlaceController(BaseControllerFixed):  # Inherit from BaseControlle
         For soft gripper: 0.0 = closed, 0.085 = fully open
         """
         from std_msgs.msg import Float64
+
+        # Update gripper position tracking
+        self.gripper_pos = width / 2.0  # Divide by 2 for each finger
 
         # Create publisher if it doesn't exist
         if not hasattr(self, 'gripper_pub'):

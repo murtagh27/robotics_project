@@ -35,6 +35,12 @@ class MotionPlanner:
         # Get current joint state
         current_joints, _ = controller.get_current_joint_state()
 
+        # Pad target joints to 8 if only 6 provided (add gripper)
+        if len(target_joints) == 6:
+            target_joints_full = np.concatenate([target_joints, current_joints[6:8]])
+        else:
+            target_joints_full = target_joints
+
         # Simple linear interpolation
         rate = rospy.Rate(100)  # 100 Hz
         steps = int(duration * 100)
@@ -46,7 +52,7 @@ class MotionPlanner:
             alpha = float(i) / steps  # 0 to 1
 
             # Interpolate between current and target
-            desired_joints = current_joints + alpha * (target_joints - current_joints)
+            desired_joints = current_joints + alpha * (target_joints_full - current_joints)
 
             # Send command
             controller.send_joint_command(desired_joints)
