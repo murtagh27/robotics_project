@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Main controller for Pick and Place Project
+Pick and Place Automation (PAPA) - Main Controller
 Integrates perception, motion planning, and task scheduling
 
 Usage:
-    python3 -i pick_and_place_controller.py
+    python3 -i controller.py
 
 Controls:
     p.start_task()  - Start the pick and place task
@@ -33,24 +33,25 @@ from motion_planner_simple import MotionPlanner  # Using simplified version with
 from task_scheduler import TaskScheduler
 
 
-class PickAndPlaceController(BaseControllerFixed):  # Inherit from BaseControllerFixed
+class PapaController(BaseControllerFixed):  # Inherit from BaseControllerFixed
     """
-    Main controller for pick and place project
+    PAPA (Pick and Place Automation) - Main Controller
     """
 
     def __init__(self):
         # Ensure ROS is initialized first
         if not rospy.core.is_initialized():
-            rospy.init_node('pick_and_place_controller', anonymous=False)
+            rospy.init_node('papa_controller', anonymous=False)
             rospy.loginfo("ROS node initialized")
 
         # Initialize base controller with UR5
         super().__init__('ur5')
 
-        rospy.loginfo("Initializing Pick and Place Controller...")
+        rospy.loginfo("Initializing PAPA Controller...")
 
         # Load configuration
-        import pick_and_place_conf as conf
+        import conf
+
         self.config = conf
 
         # Initialize modules
@@ -72,9 +73,9 @@ class PickAndPlaceController(BaseControllerFixed):  # Inherit from BaseControlle
         rospy.loginfo("=" * 60)
 
     def startSimulator(self):
-        """Start the Gazebo simulation with pick and place world"""
+        """Start the Gazebo simulation with PAPA world"""
         # Import config values
-        import pick_and_place_conf as conf
+        import conf
 
         additional_args = [
             f'gripper:={str(conf.gripper).lower()}',
@@ -86,7 +87,7 @@ class PickAndPlaceController(BaseControllerFixed):  # Inherit from BaseControlle
 
     def initVars(self):
         """Initialize variables after simulator starts"""
-        import pick_and_place_conf as conf
+        import conf
 
         # Don't call super().initVars() since we don't have robot model loaded
         # Manually initialize what we need (8 joints: 6 arm + 2 gripper)
@@ -292,7 +293,7 @@ def main():
     import base_controllers.params as base_conf
 
     # Create controller (it will initialize ROS node internally)
-    p = PickAndPlaceController()
+    p = PapaController()
 
     try:
         # Start Gazebo simulator
@@ -310,10 +311,10 @@ def main():
         p.initVars()
 
         rospy.loginfo("\n" + "=" * 60)
-        rospy.loginfo("  Pick and Place Controller Ready!")
+        rospy.loginfo("  PAPA (Pick and Place Automation) Ready!")
         rospy.loginfo("=" * 60)
         rospy.loginfo("Commands:")
-        rospy.loginfo("  p.start_task()  - Start pick and place task")
+        rospy.loginfo("  p.start_task()  - Start automation task")
         rospy.loginfo("  p.stop()        - Emergency stop")
         rospy.loginfo("  p.reset()       - Reset controller")
         rospy.loginfo("  p.go_home()     - Move to home position")

@@ -1,4 +1,4 @@
-# Module Interfaces Documentation
+# PAPA Module Interfaces
 
 This document defines the interfaces between the three main modules: **Perception**, **Motion Planning**, and **Task Scheduling**.
 
@@ -6,8 +6,8 @@ This document defines the interfaces between the three main modules: **Perceptio
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│          Pick and Place Controller                      │
-│  (pick_and_place_controller.py)                        │
+│          PAPA Controller                                │
+│  (controller.py)                                        │
 │  - Main orchestrator                                     │
 │  - ROS node initialization                              │
 │  - Robot interface                                       │

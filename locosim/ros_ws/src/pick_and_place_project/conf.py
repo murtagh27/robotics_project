@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Configuration for Pick and Place Project
-Based on locosim lab exercise configurations
+PAPA (Pick and Place Automation) - Configuration
+All parameters for robot, objects, and motion planning
 """
 
 import numpy as np
@@ -98,7 +98,7 @@ gripper_force = 10.0
 use_torque_control = True
 
 # World file to load
-world_name = 'pick_and_place.world'
+world_name = 'papa.world'
 
 # Perception mode
 use_ground_truth = True  # Use Gazebo model_states for ground truth (set False to use camera)
@@ -119,14 +119,8 @@ home_joint_config = q0  # Alias for motion planner
 object_classes = objects  # Alias for task scheduler
 
 # Missing attributes from old config
-table_initial = {
-    'position': source_table_pos.tolist(),
-    'size': [0.6, 0.4, 0.02]
-}
-table_final = {
-    'position': target_table_pos.tolist(),
-    'size': [0.6, 0.4, 0.02]
-}
+table_initial = {'position': source_table_pos.tolist(), 'size': [0.6, 0.4, 0.02]}
+table_final = {'position': target_table_pos.tolist(), 'size': [0.6, 0.4, 0.02]}
 camera_frame = 'camera_link'
 min_object_points = 50
 segmentation_threshold = 0.02
