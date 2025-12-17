@@ -41,6 +41,7 @@ objects = {
         'size': 0.05,
         'initial_pos': np.array([0.35, 0.5, table_height + 0.025]),
         'target_pos': np.array([0.35, 1.0, target_table_height + 0.025]),
+        'final_position': [0.35, 1.0, target_table_height + 0.025],  # Alias for task scheduler
         'color': 'red',
         'priority': 1,  # Pick order
     },
@@ -49,6 +50,7 @@ objects = {
         'size': 0.05,
         'initial_pos': np.array([0.50, 0.5, table_height + 0.025]),
         'target_pos': np.array([0.50, 1.0, target_table_height + 0.025]),
+        'final_position': [0.50, 1.0, target_table_height + 0.025],  # Alias for task scheduler
         'color': 'green',
         'priority': 2,
     },
@@ -57,6 +59,7 @@ objects = {
         'size': 0.05,
         'initial_pos': np.array([0.65, 0.5, table_height + 0.025]),
         'target_pos': np.array([0.65, 1.0, target_table_height + 0.025]),
+        'final_position': [0.65, 1.0, target_table_height + 0.025],  # Alias for task scheduler
         'color': 'blue',
         'priority': 3,
     },
@@ -66,6 +69,7 @@ objects = {
         'height': 0.06,
         'initial_pos': np.array([0.50, 0.65, table_height + 0.03]),
         'target_pos': np.array([0.50, 1.15, target_table_height + 0.03]),
+        'final_position': [0.50, 1.15, target_table_height + 0.03],  # Alias for task scheduler
         'color': 'yellow',
         'priority': 4,
     },
@@ -109,3 +113,20 @@ robotiq_gripper = False
 
 # Slow factor for visualization
 SLOW_FACTOR = 1.0
+
+# Aliases for compatibility with old config names
+home_joint_config = q0  # Alias for motion planner
+object_classes = objects  # Alias for task scheduler
+
+# Missing attributes from old config
+table_initial = {
+    'position': source_table_pos.tolist(),
+    'size': [0.6, 0.4, 0.02]
+}
+table_final = {
+    'position': target_table_pos.tolist(),
+    'size': [0.6, 0.4, 0.02]
+}
+camera_frame = 'camera_link'
+min_object_points = 50
+segmentation_threshold = 0.02
