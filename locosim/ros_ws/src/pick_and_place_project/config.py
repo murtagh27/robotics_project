@@ -33,48 +33,6 @@ source_table_pos = np.array([0.5, 0.5, table_height])
 # Target table center (where objects go)
 target_table_pos = np.array([0.5, 1.0, target_table_height])
 
-# Object definitions with their initial and target positions
-# Objects are on tavolo surface (z=0.85), cube center at 0.875
-objects = {
-    'cube_red': {
-        'type': 'cube',
-        'size': 0.05,
-        'initial_pos': np.array([0.35, 0.5, table_height + 0.025]),
-        'target_pos': np.array([0.35, 1.0, target_table_height + 0.025]),
-        'final_position': [0.35, 1.0, target_table_height + 0.025],  # Alias for task scheduler
-        'color': 'red',
-        'priority': 1,  # Pick order
-    },
-    'cube_green': {
-        'type': 'cube',
-        'size': 0.05,
-        'initial_pos': np.array([0.50, 0.5, table_height + 0.025]),
-        'target_pos': np.array([0.50, 1.0, target_table_height + 0.025]),
-        'final_position': [0.50, 1.0, target_table_height + 0.025],  # Alias for task scheduler
-        'color': 'green',
-        'priority': 2,
-    },
-    'cube_blue': {
-        'type': 'cube',
-        'size': 0.05,
-        'initial_pos': np.array([0.65, 0.5, table_height + 0.025]),
-        'target_pos': np.array([0.65, 1.0, target_table_height + 0.025]),
-        'final_position': [0.65, 1.0, target_table_height + 0.025],  # Alias for task scheduler
-        'color': 'blue',
-        'priority': 3,
-    },
-    'cylinder_yellow': {
-        'type': 'cylinder',
-        'radius': 0.025,
-        'height': 0.06,
-        'initial_pos': np.array([0.50, 0.65, table_height + 0.03]),
-        'target_pos': np.array([0.50, 1.15, target_table_height + 0.03]),
-        'final_position': [0.50, 1.15, target_table_height + 0.03],  # Alias for task scheduler
-        'color': 'yellow',
-        'priority': 4,
-    },
-}
-
 # Motion planning parameters
 approach_height = 0.15  # Height above object for approach
 grasp_height = 0.02  # Height offset for grasping
@@ -125,7 +83,6 @@ SLOW_FACTOR = 1.0
 
 # Aliases for compatibility with old config names
 home_joint_config = q0  # Alias for motion planner
-object_classes = objects  # Alias for task scheduler
 
 # Missing attributes from old config
 table_initial = {'position': source_table_pos.tolist(), 'size': [0.6, 0.4, 0.02]}
