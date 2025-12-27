@@ -1,0 +1,371 @@
+#!/usr/bin/env python3
+"""
+Object Spawner Module for PAPA
+Automatically spawns random objects from brick_description package
+Supports multiple object classes with different geometries (STL files)
+"""
+
+import rospy
+import roslaunch
+import tf
+import numpy as np
+import random
+from threading import Thread
+
+
+class ObjectSpawner:
+    """
+    Handles spawning of objects from brick_description package.
+
+    Supports multiple object classes with known geometries defined in STL files.
+    Automatically uploads URDF descriptions to ROS parameter server and spawns
+    objects in Gazebo at random or specified positions.
+    """
+
+    # Available brick types with their STL mesh files
+    BRICK_CLASSES = {
+        'X1-Y1-Z2': {
+            'mesh': 'X1-Y1-Z2.stl',
+            'size': np.array([0.008, 0.008, 0.016]),  # Approximate dimensions in meters
+            'mass': 0.05,
+            'class': 'small_cube',
+        },
+        'X1-Y2-Z1': {
+            'mesh': 'X1-Y2-Z1.stl',
+            'size': np.array([0.008, 0.016, 0.008]),
+            'mass': 0.05,
+            'class': 'flat_rectangle',
+        },
+        'X1-Y2-Z2': {
+            'mesh': 'X1-Y2-Z2.stl',
+            'size': np.array([0.008, 0.016, 0.016]),
+            'mass': 0.08,
+            'class': 'rectangle',
+        },
+        'X1-Y3-Z2': {
+            'mesh': 'X1-Y3-Z2.stl',
+            'size': np.array([0.008, 0.024, 0.016]),
+            'mass': 0.10,
+            'class': 'long_rectangle',
+        },
+        'X1-Y4-Z2': {
+            'mesh': 'X1-Y4-Z2.stl',
+            'size': np.array([0.008, 0.032, 0.016]),
+            'mass': 0.12,
+            'class': 'very_long_rectangle',
+        },
+        'X2-Y2-Z2': {
+            'mesh': 'X2-Y2-Z2.stl',
+            'size': np.array([0.016, 0.016, 0.016]),
+            'mass': 0.15,
+            'class': 'large_cube',
+        },
+        'X1-Y2-Z2-CHAMFER': {
+            'mesh': 'X1-Y2-Z2-CHAMFER.stl',
+            'size': np.array([0.008, 0.016, 0.016]),
+            'mass': 0.08,
+            'class': 'chamfered_rectangle',
+        },
+        'X1-Y2-Z2-TWINFILLET': {
+            'mesh': 'X1-Y2-Z2-TWINFILLET.stl',
+            'size': np.array([0.008, 0.016, 0.016]),
+            'mass': 0.08,
+            'class': 'filleted_rectangle',
+        },
+    }
+
+    def __init__(self, table_height=0.85, spawn_area_center=[0.5, 0.5], spawn_area_size=[0.3, 0.3]):
+        """
+        Initialize the object spawner.
+
+        Args:
+            table_height (float): Z-coordinate of table surface
+            spawn_area_center (list): [x, y] center of spawning area
+            spawn_area_size (list): [width, depth] of spawning area
+        """
+        self.table_height = table_height
+        self.spawn_area_center = np.array(spawn_area_center)
+        self.spawn_area_size = np.array(spawn_area_size)
+
+        self.spawned_objects = []  # List of spawned object info
+        self.tf_broadcasters = []  # TF broadcasters for each object
+        self.tf_thread = None
+        self.tf_thread_running = False
+
+        rospy.loginfo("ObjectSpawner initialized")
+        rospy.loginfo(f"  Table height: {table_height}m")
+        rospy.loginfo(f"  Spawn area: {spawn_area_center} ± {spawn_area_size}")
+        rospy.loginfo(f"  Available classes: {len(self.BRICK_CLASSES)}")
+
+    def generate_urdf(self, brick_type, object_name):
+        """
+        Generate URDF description for a brick type.
+
+        Args:
+            brick_type (str): Type from BRICK_CLASSES keys
+            object_name (str): Unique name for this object instance
+
+        Returns:
+            str: URDF XML string
+        """
+        if brick_type not in self.BRICK_CLASSES:
+            raise ValueError(f"Unknown brick type: {brick_type}")
+
+        brick_info = self.BRICK_CLASSES[brick_type]
+        mesh_file = brick_info['mesh']
+        mass = brick_info['mass']
+
+        # Generate random color for visual diversity
+        color = self._random_color()
+
+        urdf_template = f'''<?xml version="1.0" encoding="utf-8"?>
+            <robot name="{object_name}" xmlns:xacro="http://ros.org/wiki/xacro">
+
+            <material name="{object_name}_material">
+                <color rgba="{color[0]} {color[1]} {color[2]} 1.0"/>
+            </material>
+
+            <link name="{object_name}">
+                <inertial>
+                    <mass value="{mass}"/>
+                    <inertia ixx="0.001" ixy="0.0" ixz="0.0" iyy="0.001" iyz="0.0" izz="0.001"/>
+                </inertial>
+                
+                <visual>
+                    <origin xyz="0 0 0" rpy="0 0 0"/>
+                    <geometry>
+                        <mesh filename="package://brick_description/meshes/{mesh_file}" scale="1 1 1"/>
+                    </geometry>
+                    <material name="{object_name}_material"/>
+                </visual>
+                
+                <collision>
+                    <origin xyz="0 0 0" rpy="0 0 0"/>
+                    <geometry>
+                        <mesh filename="package://brick_description/meshes/{mesh_file}" scale="1 1 1"/>
+                    </geometry>
+                </collision>
+            </link>
+
+            <gazebo reference="{object_name}">
+                <material>Gazebo/Grey</material>
+                <mu1>0.8</mu1>
+                <mu2>0.8</mu2>
+                <kp>1000000.0</kp>
+                <kd>1.0</kd>
+            </gazebo>
+
+            </robot>
+            '''
+        return urdf_template
+
+    def _random_color(self):
+        """Generate a random color for object visualization."""
+        colors = [
+            [0.8, 0.2, 0.2],  # Red
+            [0.2, 0.8, 0.2],  # Green
+            [0.2, 0.2, 0.8],  # Blue
+            [0.8, 0.8, 0.2],  # Yellow
+            [0.8, 0.2, 0.8],  # Magenta
+            [0.2, 0.8, 0.8],  # Cyan
+            [0.9, 0.5, 0.2],  # Orange
+        ]
+        return random.choice(colors)
+
+    def _random_position(self):
+        """
+        Generate random position within spawn area.
+
+        Returns:
+            np.ndarray: [x, y, z] position on table surface
+        """
+        half_size = self.spawn_area_size / 2.0
+        x = self.spawn_area_center[0] + random.uniform(-half_size[0], half_size[0])
+        y = self.spawn_area_center[1] + random.uniform(-half_size[1], half_size[1])
+        z = self.table_height + 0.02  # Slightly above table to avoid collision
+        return np.array([x, y, z])
+
+    def spawn_object(self, brick_type=None, position=None, object_name=None):
+        """
+        Spawn a single object in Gazebo.
+
+        Args:
+            brick_type (str, optional): Type from BRICK_CLASSES. Random if None.
+            position (np.ndarray, optional): [x, y, z] position. Random if None.
+            object_name (str, optional): Unique name. Auto-generated if None.
+
+        Returns:
+            dict: Information about spawned object
+        """
+        # Select random brick type if not specified
+        if brick_type is None:
+            brick_type = random.choice(list(self.BRICK_CLASSES.keys()))
+
+        # Generate unique object name
+        if object_name is None:
+            object_id = len(self.spawned_objects) + 1
+            object_name = f"brick_{object_id}_{brick_type.replace('-', '_')}"
+
+        # Generate random position if not specified
+        if position is None:
+            position = self._random_position()
+
+        rospy.loginfo(f"Spawning {object_name} (type: {brick_type}) at {position}")
+
+        try:
+            # Generate and upload URDF to parameter server
+            urdf_content = self.generate_urdf(brick_type, object_name)
+            param_name = f'{object_name}_description'
+            rospy.set_param(param_name, urdf_content)
+            rospy.logdebug(f"Uploaded URDF to parameter: {param_name}")
+
+            # Spawn model in Gazebo using roslaunch
+            package = 'gazebo_ros'
+            executable = 'spawn_model'
+            node_name = f'spawn_{object_name}'
+            namespace = '/'
+
+            args = f'-urdf -param {param_name} -model {object_name} -x {position[0]} -y {position[1]} -z {position[2]}'
+
+            node = roslaunch.core.Node(
+                package, executable, node_name, namespace, args=args, output="screen"
+            )
+
+            launch = roslaunch.scriptapi.ROSLaunch()
+            launch.start()
+            process = launch.launch(node)
+
+            rospy.sleep(0.5)  # Wait for spawning to complete
+
+            # Create TF broadcaster for this object
+            broadcaster = tf.TransformBroadcaster()
+            self.tf_broadcasters.append((broadcaster, object_name, position))
+
+            # Store object information
+            object_info = {
+                'name': object_name,
+                'type': brick_type,
+                'class': self.BRICK_CLASSES[brick_type]['class'],
+                'position': position.copy(),
+                'size': self.BRICK_CLASSES[brick_type]['size'].copy(),
+                'mesh': self.BRICK_CLASSES[brick_type]['mesh'],
+                'param_name': param_name,
+            }
+            self.spawned_objects.append(object_info)
+
+            rospy.loginfo(f"✓ Successfully spawned {object_name}")
+            return object_info
+
+        except Exception as e:
+            rospy.logerr(f"Failed to spawn {object_name}: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return None
+
+    def spawn_random_objects(self, num_objects=5, allowed_types=None):
+        """
+        Spawn multiple random objects.
+
+        Args:
+            num_objects (int): Number of objects to spawn
+            allowed_types (list, optional): List of allowed brick types. All types if None.
+
+        Returns:
+            list: List of spawned object info dicts
+        """
+        rospy.loginfo(f"Spawning {num_objects} random objects...")
+
+        if allowed_types is None:
+            allowed_types = list(self.BRICK_CLASSES.keys())
+
+        spawned = []
+        for i in range(num_objects):
+            brick_type = random.choice(allowed_types)
+            obj_info = self.spawn_object(brick_type=brick_type)
+            if obj_info:
+                spawned.append(obj_info)
+            rospy.sleep(0.3)  # Small delay between spawns
+
+        rospy.loginfo(f"Spawned {len(spawned)}/{num_objects} objects successfully")
+
+        # Start TF broadcasting thread
+        self._start_tf_broadcast()
+
+        return spawned
+
+    def _start_tf_broadcast(self):
+        """Start background thread to broadcast TF transforms for all objects."""
+        if self.tf_thread_running:
+            return
+
+        self.tf_thread_running = True
+
+        def broadcast_loop():
+            rate = rospy.Rate(100)  # 100 Hz
+            while self.tf_thread_running and not rospy.is_shutdown():
+                current_time = rospy.Time.now()
+                for broadcaster, object_name, position in self.tf_broadcasters:
+                    broadcaster.sendTransform(
+                        position,
+                        (0.0, 0.0, 0.0, 1.0),  # No rotation (quaternion)
+                        current_time,
+                        f'/{object_name}',
+                        '/world',
+                    )
+                rate.sleep()
+
+        self.tf_thread = Thread(target=broadcast_loop, daemon=True)
+        self.tf_thread.start()
+        rospy.loginfo("Started TF broadcast thread for spawned objects")
+
+    def stop_tf_broadcast(self):
+        """Stop the TF broadcasting thread."""
+        self.tf_thread_running = False
+        if self.tf_thread:
+            self.tf_thread.join(timeout=1.0)
+
+    def get_spawned_objects(self):
+        """
+        Get list of all spawned objects.
+
+        Returns:
+            list: List of object info dicts
+        """
+        return self.spawned_objects.copy()
+
+    def clear_all_objects(self):
+        """Remove all spawned objects from Gazebo (future implementation)."""
+        # This would require gazebo_ros delete_model service
+        rospy.logwarn("clear_all_objects not yet implemented")
+
+
+def main():
+    """
+    Standalone test of object spawner.
+    """
+    rospy.init_node('object_spawner_test', anonymous=True)
+
+    rospy.loginfo("Testing ObjectSpawner...")
+
+    # Create spawner
+    spawner = ObjectSpawner(
+        table_height=0.85, spawn_area_center=[0.5, 0.5], spawn_area_size=[0.3, 0.3]
+    )
+
+    # Spawn 3 random objects
+    objects = spawner.spawn_random_objects(num_objects=3)
+
+    rospy.loginfo(f"\nSpawned {len(objects)} objects:")
+    for obj in objects:
+        rospy.loginfo(f"  - {obj['name']}: {obj['type']} at {obj['position']}")
+
+    rospy.loginfo("\nPress Ctrl+C to exit")
+    rospy.spin()
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except rospy.ROSInterruptException:
+        pass
