@@ -96,6 +96,9 @@ class PapaController(BaseControllerFixed):
         # Import config values
         import config as conf
 
+        # Suppress Gazebo model database warnings (harmless internet connection attempts)
+        os.environ['GAZEBO_MODEL_DATABASE_URI'] = ''
+
         additional_args = [
             f'gripper:={str(conf.gripper).lower()}',
             f'soft_gripper:={str(conf.soft_gripper).lower()}',
