@@ -106,6 +106,15 @@ camera_topic = (
     '/ur5/zed_node/point_cloud/cloud_registered'  # Point cloud topic for vision-based perception
 )
 
+# Automatic object spawning configuration
+auto_spawn_objects = True  # Automatically spawn random objects at startup
+num_objects_to_spawn = 5  # Number of objects to spawn
+spawn_area_center = [0.5, 0.5]  # Center of spawning area [x, y]
+spawn_area_size = [0.3, 0.3]  # Size of spawning area [width, depth]
+
+# Allowed brick types for spawning (None = all types), for futher info see documentation
+allowed_brick_types = None
+
 # Gripper flag
 gripper = True
 soft_gripper = True  # Two-fingered soft gripper
