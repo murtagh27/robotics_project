@@ -115,14 +115,14 @@ class ObjectSpawner:
         mesh_file = brick_info['mesh']
         mass = brick_info['mass']
 
-        # Generate random color for visual diversity
-        color = self._random_color()
+        # Generate random color for visual diversity (both RViz and Gazebo)
+        color_rgb, gazebo_material = self._random_color()
 
         urdf_template = f'''<?xml version="1.0" encoding="utf-8"?>
             <robot name="{object_name}" xmlns:xacro="http://ros.org/wiki/xacro">
 
             <material name="{object_name}_material">
-                <color rgba="{color[0]} {color[1]} {color[2]} 1.0"/>
+                <color rgba="{color_rgb[0]} {color_rgb[1]} {color_rgb[2]} 1.0"/>
             </material>
 
             <link name="{object_name}">
@@ -148,7 +148,7 @@ class ObjectSpawner:
             </link>
 
             <gazebo reference="{object_name}">
-                <material>Gazebo/Grey</material>
+                <material>{gazebo_material}</material>
                 <mu1>0.8</mu1>
                 <mu2>0.8</mu2>
                 <kp>1000000.0</kp>
@@ -160,17 +160,25 @@ class ObjectSpawner:
         return urdf_template
 
     def _random_color(self):
-        """Generate a random color for object visualization."""
-        colors = [
-            [0.8, 0.2, 0.2],  # Red
-            [0.2, 0.8, 0.2],  # Green
-            [0.2, 0.2, 0.8],  # Blue
-            [0.8, 0.8, 0.2],  # Yellow
-            [0.8, 0.2, 0.8],  # Magenta
-            [0.2, 0.8, 0.8],  # Cyan
-            [0.9, 0.5, 0.2],  # Orange
+        """
+        Generate a random color for object visualization.
+        Returns matching RGB values for RViz and Gazebo material name.
+
+        Returns:
+            tuple: (rgb_list, gazebo_material_string)
+        """
+        # Define colors with matching RGB and Gazebo material names
+        color_options = [
+            ([0.8, 0.2, 0.2], 'Gazebo/Red'),
+            ([0.2, 0.8, 0.2], 'Gazebo/Green'),
+            ([0.2, 0.2, 0.8], 'Gazebo/Blue'),
+            ([0.8, 0.8, 0.2], 'Gazebo/Yellow'),
+            ([0.8, 0.2, 0.8], 'Gazebo/Purple'),
+            ([0.2, 0.8, 0.8], 'Gazebo/Turquoise'),
+            ([0.9, 0.5, 0.2], 'Gazebo/Orange'),
+            ([0.9, 0.9, 0.9], 'Gazebo/White'),
         ]
-        return random.choice(colors)
+        return random.choice(color_options)
 
     def _random_position(self):
         """
