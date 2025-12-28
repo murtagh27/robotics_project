@@ -146,17 +146,27 @@ class PerceptionModule:
 
         # Parse Gazebo model states
         for i, name in enumerate(gazebo_model_states.name):
-            if 'cube' in name or 'cylinder' in name:
+            # Detect spawned brick objects (brick_0, brick_1, etc.)
+            # Also support legacy names for backwards compatibility
+            if name.startswith('brick_') or 'cube' in name or 'cylinder' in name:
                 pose = gazebo_model_states.pose[i]
                 obj = {
                     'name': name,
                     'position': np.array([pose.position.x, pose.position.y, pose.position.z]),
-                    'class': name,  # Use full name (e.g., 'cube_red') to match config
+                    'orientation': np.array(
+                        [
+                            pose.orientation.x,
+                            pose.orientation.y,
+                            pose.orientation.z,
+                            pose.orientation.w,
+                        ]
+                    ),
+                    'class': name,  # Use full name for identification
                 }
                 self.detected_objects.append(obj)
                 rospy.logdebug(f"Added object: {name} at position {obj['position']}")
 
-        rospy.logdebug(f"Total objects in perception: {len(self.detected_objects)}")
+        rospy.loginfo(f"Ground truth perception: detected {len(self.detected_objects)} objects")
         return self.detected_objects
 
     def use_ground_truth_positions(self, gazebo_model_states):
