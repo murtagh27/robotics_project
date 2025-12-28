@@ -71,7 +71,7 @@ Get list of currently detected objects.
     'name': str,              # Unique object identifier (e.g., 'brick_1_X1_Y2_Z2')
     'position': np.array,     # [x, y, z] in world frame (meters)
     'orientation': np.array,  # [qx, qy, qz, qw] quaternion rotation
-    'class': str             # Object class/type (e.g., 'brick_1_X1_Y2_Z2')
+    'class': str             # Semantic class name (e.g., 'rectangle', 'small_cube', 'filleted_rectangle')
 }
 ```
 
@@ -84,17 +84,28 @@ objects = perception.get_detected_objects()
 #     'name': 'brick_1_X1_Y4_Z2',
 #     'position': array([0.5552, 0.43569, 0.87]),
 #     'orientation': array([-0.00003, 0.00006, 0.94782, 0.31881]),
-#     'class': 'brick_1_X1_Y4_Z2'
+#     'class': 'very_long_rectangle'
 #   },
 #   {
 #     'name': 'brick_2_X1_Y2_Z2',
 #     'position': array([0.49638, 0.28011, 0.87]),
 #     'orientation': array([0.00004, 0.00003, 0.85883, 0.51226]),
-#     'class': 'brick_2_X1_Y2_Z2'
+#     'class': 'rectangle'
 #   },
 #   ...
 # ]
 ```
+
+**Available semantic classes** (defined in `brick_classes.py`):
+
+- `small_cube` - X1-Y1-Z2 (8×8×16mm)
+- `flat_rectangle` - X1-Y2-Z1 (8×16×8mm)
+- `rectangle` - X1-Y2-Z2 (8×16×16mm)
+- `long_rectangle` - X1-Y3-Z2 (8×24×16mm)
+- `very_long_rectangle` - X1-Y4-Z2 (8×32×16mm)
+- `large_cube` - X2-Y2-Z2 (16×16×16mm)
+- `chamfered_rectangle` - X1-Y2-Z2-CHAMFER
+- `filleted_rectangle` - X1-Y2-Z2-TWINFILLET
 
 **Current Implementation:** Ground truth from Gazebo (automatic, real-time updates)
 
@@ -147,8 +158,9 @@ def find_object_by_name(name_pattern):
 1. **Data is always available** - Perception updates automatically in ground truth mode
 2. **Position is in meters** - World frame coordinates
 3. **Orientation is quaternion** - [x, y, z, w] format for grasp planning
-4. **Class name format** - Currently `brick_N_TYPE` (e.g., `brick_1_X1_Y2_Z2`)
+4. **Semantic class names** - The `'class'` field contains human-readable names (e.g., `'rectangle'`, `'small_cube'`) defined in `brick_classes.py`
 5. **Data structure is stable** - Will remain the same when switching to camera-based perception
+6. **Shared definitions** - Object classes are defined in `brick_classes.py`, shared between spawner and perception modules
 
 **Called by:** TaskScheduler.detect_and_plan()
 
@@ -386,7 +398,40 @@ Get current robot joint positions and velocities.
 
 ---
 
-## 5. Configuration (`config.py`)
+## 5. Brick Classes (`brick_classes.py`)
+
+Shared brick type definitions used by object spawner and perception modules.
+
+**Purpose:** Single source of truth for all brick types with their properties.
+
+**Structure:**
+
+```python
+BRICK_CLASSES = {
+    'X1-Y1-Z2': {
+        'mesh': 'X1-Y1-Z2.stl',
+        'size': np.array([0.008, 0.008, 0.016]),  # meters
+        'mass': 0.05,  # kg
+        'class': 'small_cube',  # Semantic class name
+    },
+    # ... 7 more brick types
+}
+```
+
+**Usage:**
+
+```python
+from brick_classes import BRICK_CLASSES
+
+# Get properties
+brick_info = BRICK_CLASSES['X1-Y2-Z2']
+semantic_name = brick_info['class']  # 'rectangle'
+mesh_file = brick_info['mesh']  # 'X1-Y2-Z2.stl'
+```
+
+---
+
+## 6. Configuration (`config.py`)
 
 Shared configuration used by all modules:
 
