@@ -18,6 +18,7 @@ class PerceptionModule:
     def __init__(self, config):
         self.config = config
         self.detected_objects = []
+        self._last_object_count = 0  # Track object count to avoid log spam
 
         if not config.use_ground_truth:
             # Subscribe to camera point cloud
@@ -166,7 +167,11 @@ class PerceptionModule:
                 self.detected_objects.append(obj)
                 rospy.logdebug(f"Added object: {name} at position {obj['position']}")
 
-        rospy.loginfo(f"Ground truth perception: detected {len(self.detected_objects)} objects")
+        # Only log when object count changes to avoid spam
+        if len(self.detected_objects) != self._last_object_count:
+            rospy.loginfo(f"Ground truth perception: detected {len(self.detected_objects)} objects")
+            self._last_object_count = len(self.detected_objects)
+
         return self.detected_objects
 
     def use_ground_truth_positions(self, gazebo_model_states):
