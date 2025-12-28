@@ -11,23 +11,26 @@ echo "=========================================="
 source /opt/ros/noetic/setup.bash
 
 # Source workspace
-if [ -f ~/ros_ws/devel/setup.bash ]; then
-    source ~/ros_ws/devel/setup.bash
+if [ -f /home/ubuntu/ros_ws/devel/setup.bash ]; then
+    source /home/ubuntu/ros_ws/devel/setup.bash
     echo "✓ ROS workspace sourced"
 else
-    echo "✗ Error: ROS workspace not found!"
+    echo "✗ Error: ROS workspace not found at /home/ubuntu/ros_ws/devel/setup.bash"
     exit 1
 fi
 
 # Set environment variables
-export LOCOSIM_DIR=~/ros_ws/src/locosim
+export LOCOSIM_DIR=/home/ubuntu/ros_ws/src/locosim
+export PYTHONPATH=/opt/ros/noetic/lib/python3.8/site-packages:$PYTHONPATH
+export PYTHONPATH=/opt/ros/noetic/lib/python3/dist-packages:$PYTHONPATH
 export PYTHONPATH=$LOCOSIM_DIR:$PYTHONPATH
 export PYTHONPATH=$LOCOSIM_DIR/robot_control:$PYTHONPATH
-export PYTHONPATH=~/ros_ws/src/pick_and_place_project:$PYTHONPATH
+export PYTHONPATH=/home/ubuntu/ros_ws/src/pick_and_place_project:$PYTHONPATH
 echo "✓ Environment variables set"
+echo "  LOCOSIM_DIR: $LOCOSIM_DIR"
 
 # Copy world file to locosim worlds directory
-WORLD_SRC=~/ros_ws/src/pick_and_place_project/papa.world
+WORLD_SRC=/home/ubuntu/ros_ws/src/pick_and_place_project/papa.world
 WORLD_DST=$LOCOSIM_DIR/ros_impedance_controller/worlds/papa.world
 
 if [ -f "$WORLD_SRC" ]; then
@@ -38,7 +41,7 @@ else
 fi
 
 # Navigate to project directory
-cd ~/ros_ws/src/pick_and_place_project
+cd /home/ubuntu/ros_ws/src/pick_and_place_project
 
 echo "=========================================="
 echo "Launching PAPA Controller"
