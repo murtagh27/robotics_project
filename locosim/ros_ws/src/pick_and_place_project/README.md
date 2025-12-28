@@ -35,11 +35,27 @@ Modular pick-and-place system with three main components working together:
 2. **Motion Planner** - Plans and executes robot movements
 3. **Task Scheduler** - Coordinates high-level task execution
 
+and an extra component to set up the task:
+
+4. **Object Spawner** - Dynamically spawns objects with known geometries
+
+### Features
+
+✅ **Automatic Object Spawning**: Randomly spawns objects from 8 different brick types at startup  
+✅ **Multiple Object Classes**: Different geometries defined in STL files  
+✅ **Ground Truth Detection**: Uses Gazebo model states for object localization  
+✅ **Position & Orientation**: Full 6-DOF pose information (position + quaternion)  
+✅ **Dynamic TF Broadcasting**: Automatic transforms for all spawned objects
+
+See [OBJECT_SPAWNING.md](OBJECT_SPAWNING.md) for object spawning details.  
+See [INTERFACES.md](INTERFACES.md) for detailed interface specifications.
+
 ### Current Status
 
 ✅ **Working:**
 
-- Ground truth object detection (4 objects: 3 cubes, 1 cylinder)
+- Automatic random object spawning with 8 brick types
+- Ground truth object detection (multiple object classes)
 - Task planning and sequencing
 - Joint-space motion execution
 - Gripper control
@@ -56,24 +72,28 @@ Modular pick-and-place system with three main components working together:
 
 ```
 pick_and_place_project/
-├── README.md                       # Project documentation
-├── INTERFACES.md                   # Module interface specifications
-├── run_papa.sh                     # Launch script
+├── README.md                       # Project overview and quick start
+├── INTERFACES.md                   # Detailed API specifications
+├── OBJECT_SPAWNING.md              # Object spawning system documentation
+├── project_task.md                 # Original project requirements
 │
 ├── controller.py                   # Main controller & robot interface
 ├── perception_module.py            # Object detection module
-├── motion_planner.py               # Motion planning (joint space)
+├── motion_planner.py               # Motion planning module
 ├── task_scheduler.py               # High-level task coordination
+├── object_spawner.py               # Dynamic object spawning system
 ├── config.py                       # Configuration parameters
 ├── papa.world                      # Gazebo world file
 │
 └── archive/                        # Archived/unused code
+    ├── README_OLD.md
     ├── pick_and_place_gazebo.py
     ├── pick_and_place_main.py
     ├── motion_planner.py
     └── config/
-        └── params.py               # Legacy config (not used)
+        └── params.py
 
+Launch script: ../run_papa.sh       # Located in ros_ws/
 ```
 
 ## Team Collaboration
@@ -99,44 +119,49 @@ Edit `config.py` to adjust:
 - **Perception settings** - Ground truth vs camera, topics
 - **Gripper settings** - Open/close values
 
-## Architecture
+## Module Overview
 
-```
-┌─────────────────────────────────────────────────────────┐
-│          PAPA Controller                                │
-│  - ROS node initialization                              │
-│  - Robot interface (joints, gripper)                    │
-│  - Gazebo simulation management                         │
-└──────────────┬──────────────┬──────────────┬────────────┘
-               │              │              │
-       ┌───────▼──────┐   ┌───▼──────┐   ┌───▼───────────┐
-       │  Perception  │   │  Motion  │   │ Task Scheduler│
-       │              │   │ Planner  │   │               │
-       │ - Detect     │   │ - IK     │   │ - State       │
-       │ - Localize   │   │ - Plan   │   │   machine     │
-       │ - Classify   │   │ - Execute│   │ - Sequence    │
-       └──────────────┘   └──────────┘   └───────────────┘
-```
+The system uses a modular architecture with three main modules coordinated by a central controller. See [INTERFACES.md](INTERFACES.md) for detailed technical specifications.
 
-## Key Features
+**Key Modules:**
 
-### Perception Module (`perception_module.py`)
+### 1. Perception Module
 
-- **Ground truth mode**: Uses Gazebo `/gazebo/model_states` topic
-- **Vision mode**: Point cloud processing (to be implemented)
-- **Output**: List of detected objects with positions and classes
+- **Current**: Ground truth detection from Gazebo model states
+- **Future**: Camera-based point cloud processing
+- **Output**: Object positions (x, y, z) and orientations (quaternion)
+- **Interface**: `perception.get_detected_objects()` returns list of detected objects
 
-### Motion Planner (`motion_planner.py`)
+### 2. Motion Planner
 
-- **Current**: Hardcoded joint waypoints with linear interpolation
-- **Planned**: IK-based motion planning with actual object coordinates
-- **Methods**: `move_to_joints()`, `pick_object()`, `place_object()`
+- **Current**: Joint-space motion with linear interpolation
+- **Future**: IK-based motion planning and trajectory optimization
+- **Interface**: `pick_object(pos)`, `place_object(pos)`, `move_to_joints(joints)`
 
-### Task Scheduler (`task_scheduler.py`)
+### 3. Task Scheduler
 
-- **State machine** for coordinating pick-place workflow
+- **Function**: State machine coordinating pick-place workflow
 - **Sequence**: Detect → Plan → Pick → Place → Repeat
-- **States**: IDLE, DETECTING, PLANNING, MOVING_TO_OBJECT, PICKING, MOVING_TO_TARGET, PLACING, RETURNING_HOME, COMPLETED
+- **Interface**: `execute_task_sequence()` runs full automation
+
+## Testing Your Module
+
+### Test Perception
+
+```python
+# Check what objects are detected
+objects = p.perception.get_detected_objects()
+print(f"Detected {len(objects)} objects")
+
+# View object details
+for obj in objects:
+    print(f"{obj['name']}: pos={obj['position']}, ori={obj['orientation']}")
+
+# Spawn additional objects for testing
+p.object_spawner.spawn_random_objects(3)
+import time; time.sleep(1)
+objects = p.perception.get_detected_objects()
+```
 
 ## Troubleshooting
 
@@ -159,18 +184,6 @@ Edit `config.py` to adjust:
 - Check system resources: `htop`
 
 ## Development Tips
-
-### Adding New Objects
-
-1. Edit `papa.world` - Add model definition
-2. Edit `config.py` - Add to `object_classes` dict
-3. Restart simulation
-
-### Tuning Motion
-
-1. Adjust waypoints in `motion_planner.py`
-2. Change durations for smoother/faster motion
-3. Test with single object first
 
 ### Debugging
 

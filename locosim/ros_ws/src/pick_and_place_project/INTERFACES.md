@@ -1,13 +1,14 @@
 # PAPA Module Interfaces
 
-This document defines the interfaces between the three main modules: **Perception**, **Motion Planning**, and **Task Scheduling**.
+This document defines the technical interfaces between the three main modules: **Perception**, **Motion Planning**, and **Task Scheduling**.
+
+For high-level system overview, see [README.md](README.md).
 
 ## Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│          PAPA Controller                                │
-│  (controller.py)                                        │
+│          PAPA Controller (controller.py)                │
 │  - Main orchestrator                                    │
 │  - ROS node initialization                              │
 │  - Robot interface                                      │
@@ -67,9 +68,10 @@ Get list of currently detected objects.
 
 ```python
 {
-    'name': str,           # Object name (e.g., 'cube_red')
-    'position': np.array,  # [x, y, z] in world frame (meters)
-    'class': str          # Object class (e.g., 'cube_red', 'cylinder_yellow')
+    'name': str,              # Unique object identifier (e.g., 'brick_1_X1_Y2_Z2')
+    'position': np.array,     # [x, y, z] in world frame (meters)
+    'orientation': np.array,  # [qx, qy, qz, qw] quaternion rotation
+    'class': str             # Object class/type (e.g., 'brick_1_X1_Y2_Z2')
 }
 ```
 
@@ -78,11 +80,75 @@ Get list of currently detected objects.
 ```python
 objects = perception.get_detected_objects()
 # Returns: [
-#   {'name': 'cube_red', 'position': array([0.35, 0.5, 0.895]), 'class': 'cube_red'},
-#   {'name': 'cube_green', 'position': array([0.5, 0.5, 0.895]), 'class': 'cube_green'},
+#   {
+#     'name': 'brick_1_X1_Y4_Z2',
+#     'position': array([0.5552, 0.43569, 0.87]),
+#     'orientation': array([-0.00003, 0.00006, 0.94782, 0.31881]),
+#     'class': 'brick_1_X1_Y4_Z2'
+#   },
+#   {
+#     'name': 'brick_2_X1_Y2_Z2',
+#     'position': array([0.49638, 0.28011, 0.87]),
+#     'orientation': array([0.00004, 0.00003, 0.85883, 0.51226]),
+#     'class': 'brick_2_X1_Y2_Z2'
+#   },
 #   ...
 # ]
 ```
+
+**Current Implementation:** Ground truth from Gazebo (automatic, real-time updates)
+
+**Future Implementation:** Camera-based vision (same data structure)
+
+**Called by:** TaskScheduler.detect_and_plan()
+
+---
+
+### **Using Perception Data in Your Module**
+
+**Access detected objects:**
+
+```python
+# In task_scheduler.py or motion_planner.py
+objects = self.perception.get_detected_objects()
+
+for obj in objects:
+    # Get position for motion planning
+    target_x, target_y, target_z = obj['position']
+
+    # Get orientation for grasp planning
+    qx, qy, qz, qw = obj['orientation']
+
+    # Get object identifier
+    object_name = obj['name']
+    object_type = obj['class']
+```
+
+**Check number of objects:**
+
+```python
+num_objects = len(self.perception.get_detected_objects())
+```
+
+**Find specific object:**
+
+```python
+def find_object_by_name(name_pattern):
+    for obj in self.perception.get_detected_objects():
+        if name_pattern in obj['name']:
+            return obj
+    return None
+```
+
+---
+
+### ⚠️ **Notes for Teammates**
+
+1. **Data is always available** - Perception updates automatically in ground truth mode
+2. **Position is in meters** - World frame coordinates
+3. **Orientation is quaternion** - [x, y, z, w] format for grasp planning
+4. **Class name format** - Currently `brick_N_TYPE` (e.g., `brick_1_X1_Y2_Z2`)
+5. **Data structure is stable** - Will remain the same when switching to camera-based perception
 
 **Called by:** TaskScheduler.detect_and_plan()
 
@@ -328,17 +394,6 @@ Shared configuration used by all modules:
 # Robot parameters
 robot_name = 'ur5'
 q0 = np.array([...])  # Home joint config
-
-# Object definitions
-object_classes = {
-    'cube_red': {
-        'type': 'cube',
-        'initial_pos': np.array([x, y, z]),
-        'final_position': np.array([x, y, z]),
-        'priority': int
-    },
-    ...
-}
 
 # Perception settings
 use_ground_truth = True
