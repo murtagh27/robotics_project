@@ -185,12 +185,12 @@ class ObjectSpawner:
         Generate random position within spawn area.
 
         Returns:
-            np.ndarray: [x, y, z] position on table surface
+            np.ndarray: [x, y, z] position on table surfaces
         """
         half_size = self.spawn_area_size / 2.0
         x = self.spawn_area_center[0] + random.uniform(-half_size[0], half_size[0])
         y = self.spawn_area_center[1] + random.uniform(-half_size[1], half_size[1])
-        z = self.table_height + 0.02  # Slightly above table to avoid collision
+        z = self.table_height + 0.1  # Slightly above table to avoid spawn collisions
         return np.array([x, y, z])
 
     def spawn_object(self, brick_type=None, position=None, object_name=None):
