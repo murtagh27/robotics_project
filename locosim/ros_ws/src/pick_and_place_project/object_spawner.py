@@ -11,6 +11,7 @@ import tf
 import numpy as np
 import random
 from threading import Thread
+from brick_classes import BRICK_CLASSES
 
 
 class ObjectSpawner:
@@ -21,58 +22,6 @@ class ObjectSpawner:
     Automatically uploads URDF descriptions to ROS parameter server and spawns
     objects in Gazebo at random or specified positions.
     """
-
-    # Available brick types with their STL mesh files
-    BRICK_CLASSES = {
-        'X1-Y1-Z2': {
-            'mesh': 'X1-Y1-Z2.stl',
-            'size': np.array([0.008, 0.008, 0.016]),  # Approximate dimensions in meters
-            'mass': 0.05,
-            'class': 'small_cube',
-        },
-        'X1-Y2-Z1': {
-            'mesh': 'X1-Y2-Z1.stl',
-            'size': np.array([0.008, 0.016, 0.008]),
-            'mass': 0.05,
-            'class': 'flat_rectangle',
-        },
-        'X1-Y2-Z2': {
-            'mesh': 'X1-Y2-Z2.stl',
-            'size': np.array([0.008, 0.016, 0.016]),
-            'mass': 0.08,
-            'class': 'rectangle',
-        },
-        'X1-Y3-Z2': {
-            'mesh': 'X1-Y3-Z2.stl',
-            'size': np.array([0.008, 0.024, 0.016]),
-            'mass': 0.10,
-            'class': 'long_rectangle',
-        },
-        'X1-Y4-Z2': {
-            'mesh': 'X1-Y4-Z2.stl',
-            'size': np.array([0.008, 0.032, 0.016]),
-            'mass': 0.12,
-            'class': 'very_long_rectangle',
-        },
-        'X2-Y2-Z2': {
-            'mesh': 'X2-Y2-Z2.stl',
-            'size': np.array([0.016, 0.016, 0.016]),
-            'mass': 0.15,
-            'class': 'large_cube',
-        },
-        'X1-Y2-Z2-CHAMFER': {
-            'mesh': 'X1-Y2-Z2-CHAMFER.stl',
-            'size': np.array([0.008, 0.016, 0.016]),
-            'mass': 0.08,
-            'class': 'chamfered_rectangle',
-        },
-        'X1-Y2-Z2-TWINFILLET': {
-            'mesh': 'X1-Y2-Z2-TWINFILLET.stl',
-            'size': np.array([0.008, 0.016, 0.016]),
-            'mass': 0.08,
-            'class': 'filleted_rectangle',
-        },
-    }
 
     def __init__(self, table_height=0.85, spawn_area_center=[0.5, 0.5], spawn_area_size=[0.3, 0.3]):
         """
@@ -95,7 +44,7 @@ class ObjectSpawner:
         rospy.loginfo("ObjectSpawner initialized")
         rospy.loginfo(f"  Table height: {table_height}m")
         rospy.loginfo(f"  Spawn area: {spawn_area_center} ± {spawn_area_size}")
-        rospy.loginfo(f"  Available classes: {len(self.BRICK_CLASSES)}")
+        rospy.loginfo(f"  Available classes: {len(BRICK_CLASSES)}")
 
     def generate_urdf(self, brick_type, object_name):
         """
@@ -108,10 +57,10 @@ class ObjectSpawner:
         Returns:
             str: URDF XML string
         """
-        if brick_type not in self.BRICK_CLASSES:
+        if brick_type not in BRICK_CLASSES:
             raise ValueError(f"Unknown brick type: {brick_type}")
 
-        brick_info = self.BRICK_CLASSES[brick_type]
+        brick_info = BRICK_CLASSES[brick_type]
         mesh_file = brick_info['mesh']
         mass = brick_info['mass']
 
@@ -227,7 +176,7 @@ class ObjectSpawner:
         """
         # Select random brick type if not specified
         if brick_type is None:
-            brick_type = random.choice(list(self.BRICK_CLASSES.keys()))
+            brick_type = random.choice(list(BRICK_CLASSES.keys()))
 
         # Generate unique object name
         if object_name is None:
@@ -283,11 +232,11 @@ class ObjectSpawner:
             object_info = {
                 'name': object_name,
                 'type': brick_type,
-                'class': self.BRICK_CLASSES[brick_type]['class'],
+                'class': BRICK_CLASSES[brick_type]['class'],
                 'position': position.copy(),
                 'rotation': rotation.copy(),
-                'size': self.BRICK_CLASSES[brick_type]['size'].copy(),
-                'mesh': self.BRICK_CLASSES[brick_type]['mesh'],
+                'size': BRICK_CLASSES[brick_type]['size'].copy(),
+                'mesh': BRICK_CLASSES[brick_type]['mesh'],
                 'param_name': param_name,
             }
             self.spawned_objects.append(object_info)
@@ -316,7 +265,7 @@ class ObjectSpawner:
         rospy.loginfo(f"Spawning {num_objects} random objects...")
 
         if allowed_types is None:
-            allowed_types = list(self.BRICK_CLASSES.keys())
+            allowed_types = list(BRICK_CLASSES.keys())
 
         spawned = []
         for i in range(num_objects):

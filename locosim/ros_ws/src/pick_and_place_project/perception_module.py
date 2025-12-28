@@ -8,6 +8,7 @@ import rospy
 from sensor_msgs.msg import PointCloud2
 from geometry_msgs.msg import Pose
 import sensor_msgs.point_cloud2 as pc2
+from brick_classes import BRICK_CLASSES
 
 
 class PerceptionModule:
@@ -138,6 +139,23 @@ class PerceptionModule:
                 return pose
         return None
 
+    def _extract_brick_type_from_name(self, name):
+        """
+        Extract brick type from spawned object name.
+
+        Args:
+            name (str): Object name (e.g., 'brick_2_X1_Y2_Z2')
+
+        Returns:
+            str or None: Brick type (e.g., 'X1-Y2-Z2') or None if not extractable
+        """
+        if name.startswith('brick_'):
+            parts = name.split('_')
+            if len(parts) >= 4:  # brick, number, type parts
+                # Rejoin type parts with hyphens (X1, Y2, Z2 -> X1-Y2-Z2)
+                return '-'.join(parts[2:])
+        return None
+
     def update_ground_truth(self, gazebo_model_states):
         """
         Update object positions from Gazebo ground truth
@@ -151,6 +169,16 @@ class PerceptionModule:
             # Also support legacy names for backwards compatibility
             if name.startswith('brick_') or 'cube' in name or 'cylinder' in name:
                 pose = gazebo_model_states.pose[i]
+
+                # Extract brick type and look up semantic class name from BRICK_CLASSES
+                brick_class = 'unknown'
+                if name.startswith('brick_'):
+                    brick_type = self._extract_brick_type_from_name(name)
+                    if brick_type and brick_type in BRICK_CLASSES:
+                        brick_class = BRICK_CLASSES[brick_type]['class']
+                    elif brick_type:
+                        brick_class = brick_type  # Fallback to brick type if not in BRICK_CLASSES
+
                 obj = {
                     'name': name,
                     'position': np.array([pose.position.x, pose.position.y, pose.position.z]),
@@ -162,7 +190,7 @@ class PerceptionModule:
                             pose.orientation.w,
                         ]
                     ),
-                    'class': name,  # Use full name for identification
+                    'class': brick_class,
                 }
                 self.detected_objects.append(obj)
                 rospy.logdebug(f"Added object: {name} at position {obj['position']}")
