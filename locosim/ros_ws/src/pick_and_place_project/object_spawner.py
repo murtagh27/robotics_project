@@ -180,6 +180,25 @@ class ObjectSpawner:
         ]
         return random.choice(color_options)
 
+    def _random_rotation(self):
+        """
+        Generate random rotation as quaternion.
+        Generates random rotation around Z axis (yaw) to keep objects upright.
+
+        Returns:
+            np.ndarray: [x, y, z, w] quaternion
+        """
+        # Random yaw angle (rotation around Z axis)
+        yaw = random.uniform(0, 2 * np.pi)
+
+        # Convert to quaternion (only Z-axis rotation to keep objects upright)
+        qx = 0.0
+        qy = 0.0
+        qz = np.sin(yaw / 2.0)
+        qw = np.cos(yaw / 2.0)
+
+        return np.array([qx, qy, qz, qw])
+
     def _random_position(self):
         """
         Generate random position within spawn area.
@@ -193,13 +212,14 @@ class ObjectSpawner:
         z = self.table_height + 0.1  # Slightly above table to avoid spawn collisions
         return np.array([x, y, z])
 
-    def spawn_object(self, brick_type=None, position=None, object_name=None):
+    def spawn_object(self, brick_type=None, position=None, rotation=None, object_name=None):
         """
         Spawn a single object in Gazebo.
 
         Args:
             brick_type (str, optional): Type from BRICK_CLASSES. Random if None.
             position (np.ndarray, optional): [x, y, z] position. Random if None.
+            rotation (np.ndarray, optional): [x, y, z, w] quaternion. Random if None.
             object_name (str, optional): Unique name. Auto-generated if None.
 
         Returns:
@@ -218,6 +238,10 @@ class ObjectSpawner:
         if position is None:
             position = self._random_position()
 
+        # Generate random rotation if not specified
+        if rotation is None:
+            rotation = self._random_rotation()
+
         rospy.loginfo(f"Spawning {object_name} (type: {brick_type}) at {position}")
 
         try:
@@ -233,7 +257,13 @@ class ObjectSpawner:
             node_name = f'spawn_{object_name}'
             namespace = '/'
 
-            args = f'-urdf -param {param_name} -model {object_name} -x {position[0]} -y {position[1]} -z {position[2]}'
+            # Convert quaternion to yaw angle for spawn command
+            yaw = np.arctan2(
+                2.0 * (rotation[3] * rotation[2] + rotation[0] * rotation[1]),
+                1.0 - 2.0 * (rotation[1] ** 2 + rotation[2] ** 2),
+            )
+
+            args = f'-urdf -param {param_name} -model {object_name} -x {position[0]} -y {position[1]} -z {position[2]} -R 0 -P 0 -Y {yaw}'
 
             node = roslaunch.core.Node(
                 package, executable, node_name, namespace, args=args, output="screen"
@@ -245,9 +275,9 @@ class ObjectSpawner:
 
             rospy.sleep(0.5)  # Wait for spawning to complete
 
-            # Create TF broadcaster for this object
+            # Create TF broadcaster for this object (with rotation)
             broadcaster = tf.TransformBroadcaster()
-            self.tf_broadcasters.append((broadcaster, object_name, position))
+            self.tf_broadcasters.append((broadcaster, object_name, position, rotation))
 
             # Store object information
             object_info = {
@@ -255,6 +285,7 @@ class ObjectSpawner:
                 'type': brick_type,
                 'class': self.BRICK_CLASSES[brick_type]['class'],
                 'position': position.copy(),
+                'rotation': rotation.copy(),
                 'size': self.BRICK_CLASSES[brick_type]['size'].copy(),
                 'mesh': self.BRICK_CLASSES[brick_type]['mesh'],
                 'param_name': param_name,
@@ -313,10 +344,12 @@ class ObjectSpawner:
             rate = rospy.Rate(100)  # 100 Hz
             while self.tf_thread_running and not rospy.is_shutdown():
                 current_time = rospy.Time.now()
-                for broadcaster, object_name, position in self.tf_broadcasters:
+                for item in self.tf_broadcasters:
+                    broadcaster, object_name, position = item[0], item[1], item[2]
+                    rotation = item[3] if len(item) > 3 else (0.0, 0.0, 0.0, 1.0)
                     broadcaster.sendTransform(
                         position,
-                        (0.0, 0.0, 0.0, 1.0),  # No rotation (quaternion)
+                        tuple(rotation),  # Use actual rotation quaternion
                         current_time,
                         f'/{object_name}',
                         '/world',
