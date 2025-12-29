@@ -1,246 +1,144 @@
 """
-Motion planning and control for UR5 manipulator
-Handles inverse kinematics, trajectory generation, and gripper control
+Simplified Motion Planner - Uses joint-space waypoints instead of IK
+This version doesn't require Pinocchio to work
 """
 
 import numpy as np
 import rospy
-from geometry_msgs.msg import Pose
-import pinocchio as pin
 
 
 class MotionPlanner:
     """
-    Handles arm motion planning and execution
+    Simplified motion planner using pre-defined joint configurations
     """
-    
-    def __init__(self, robot, config):
-        self.robot = robot  # Pinocchio robot model
+
+    def __init__(self, controller, config):
+        self.controller = controller
         self.config = config
-        self.current_joint_pos = np.zeros(6)
-        
+
+        # Pre-defined joint configurations (no IK needed)
+        self.home_joints = np.array(config.home_joint_config)
+
+        rospy.loginfo("Motion planner initialized (simplified mode)")
+
+    def move_to_joints(self, target_joints, controller, duration=3.0):
+        """
+        Move to target joint configuration using smooth interpolation
+
+        Args:
+            target_joints: Target joint angles [6]
+            controller: Controller instance
+            duration: Movement duration in seconds
+        """
+        rospy.loginfo(f"Moving to joint configuration over {duration}s")
+
+        # Get current joint state
+        current_joints, _ = controller.get_current_joint_state()
+
+        # Pad target joints to 8 if only 6 provided (add gripper)
+        if len(target_joints) == 6:
+            target_joints_full = np.concatenate([target_joints, current_joints[6:8]])
+        else:
+            target_joints_full = target_joints
+
+        # Simple linear interpolation
+        rate = rospy.Rate(100)  # 100 Hz
+        steps = int(duration * 100)
+
+        for i in range(steps + 1):
+            if rospy.is_shutdown():
+                break
+
+            alpha = float(i) / steps  # 0 to 1
+
+            # Interpolate between current and target
+            desired_joints = current_joints + alpha * (target_joints_full - current_joints)
+
+            # Send command
+            controller.send_joint_command(desired_joints)
+
+            rate.sleep()
+
+        rospy.loginfo("Movement complete")
+        return True
+
+    def pick_object(self, object_pos, controller):
+        """
+        Execute pick sequence using hardcoded waypoints
+
+        Args:
+            object_pos: Object position [x, y, z]
+            controller: Controller instance
+        """
+        rospy.loginfo(f"Picking object at position: {object_pos}")
+
+        # TODO: For now, use predefined waypoints
+        # In a full implementation, you'd compute these from object_pos
+
+        # Move to approach position (above object)
+        rospy.loginfo("  Moving to approach position...")
+        approach_joints = np.array([-0.5, -1.0, -2.0, -1.5, -1.57, 0.0])
+        self.move_to_joints(approach_joints, controller, duration=2.0)
+
+        # Move down to grasp
+        rospy.loginfo("  Moving down to grasp...")
+        grasp_joints = np.array([-0.5, -0.8, -2.2, -1.3, -1.57, 0.0])
+        self.move_to_joints(grasp_joints, controller, duration=1.5)
+
+        # Close gripper
+        rospy.loginfo("  Closing gripper...")
+        controller.send_gripper_command(0.0)  # Close
+        rospy.sleep(1.5)
+
+        # Lift object
+        rospy.loginfo("  Lifting object...")
+        self.move_to_joints(approach_joints, controller, duration=1.5)
+
+        rospy.loginfo("Pick complete")
+        return True
+
+    def place_object(self, target_pos, controller):
+        """
+        Execute place sequence using hardcoded waypoints
+
+        Args:
+            target_pos: Target position [x, y, z]
+            controller: Controller instance
+        """
+        rospy.loginfo(f"Placing object at position: {target_pos}")
+
+        # Move to place approach
+        rospy.loginfo("  Moving to place approach...")
+        place_approach_joints = np.array([0.5, -1.0, -2.0, -1.5, -1.57, 0.0])
+        self.move_to_joints(place_approach_joints, controller, duration=2.0)
+
+        # Move down to place
+        rospy.loginfo("  Moving down to place...")
+        place_joints = np.array([0.5, -0.8, -2.2, -1.3, -1.57, 0.0])
+        self.move_to_joints(place_joints, controller, duration=1.5)
+
+        # Open gripper
+        rospy.loginfo("  Opening gripper...")
+        controller.send_gripper_command(0.085)  # Open
+        rospy.sleep(1.5)
+
+        # Lift up
+        rospy.loginfo("  Lifting after place...")
+        self.move_to_joints(place_approach_joints, controller, duration=1.5)
+
+        rospy.loginfo("Place complete")
+        return True
+
     def compute_ik(self, target_pose, initial_guess=None):
         """
-        Compute inverse kinematics for target end-effector pose
-        
-        Args:
-            target_pose: Desired end-effector pose [x, y, z, roll, pitch, yaw]
-            initial_guess: Initial joint configuration
-            
-        Returns:
-            Joint configuration or None if IK fails
+        Stub for IK computation (not implemented in simple version)
         """
-        if initial_guess is None:
-            initial_guess = self.current_joint_pos
-        
-        # Convert target pose to SE3
-        x, y, z = target_pose[:3]
-        
-        # Create target SE3 transformation
-        target_SE3 = pin.SE3.Identity()
-        target_SE3.translation = np.array([x, y, z])
-        
-        if len(target_pose) > 3:
-            # Apply orientation if provided
-            roll, pitch, yaw = target_pose[3:6]
-            R = pin.rpy.rpyToMatrix(roll, pitch, yaw)
-            target_SE3.rotation = R
-        
-        # Solve IK using Pinocchio
-        q = initial_guess.copy()
-        eps = 1e-4
-        max_iter = 1000
-        dt = 0.1
-        
-        for i in range(max_iter):
-            # Forward kinematics
-            pin.forwardKinematics(self.robot.model, self.robot.data, q)
-            pin.updateFramePlacements(self.robot.model, self.robot.data)
-            
-            # Get current end-effector pose
-            ee_frame_id = self.robot.model.getFrameId("tool0")
-            current_SE3 = self.robot.data.oMf[ee_frame_id]
-            
-            # Compute error
-            error = pin.log(current_SE3.inverse() * target_SE3).vector
-            
-            if np.linalg.norm(error) < eps:
-                return q
-            
-            # Compute Jacobian
-            J = pin.computeFrameJacobian(
-                self.robot.model,
-                self.robot.data,
-                q,
-                ee_frame_id,
-                pin.ReferenceFrame.LOCAL
-            )
-            
-            # Compute joint velocity
-            v = pin.utils.zero(self.robot.model.nv)
-            v = np.linalg.pinv(J) @ error
-            
-            # Update joint positions
-            q = pin.integrate(self.robot.model, q, v * dt)
-        
-        rospy.logwarn("IK did not converge")
+        rospy.logwarn("IK computation not available in simplified mode")
         return None
-    
-    def plan_trajectory(self, start_joints, end_joints, duration=2.0):
+
+    def move_to_pose(self, target_pos, target_orient, controller, duration=3.0):
         """
-        Generate smooth trajectory between joint configurations
-        
-        Args:
-            start_joints: Starting joint configuration
-            end_joints: Ending joint configuration
-            duration: Trajectory duration in seconds
-            
-        Returns:
-            List of (time, joint_pos, joint_vel) tuples
+        Stub for Cartesian motion (not implemented in simple version)
         """
-        trajectory = []
-        num_points = int(duration * 100)  # 100 Hz
-        
-        for i in range(num_points):
-            t = i / num_points
-            # Simple linear interpolation (can use splines for smoother motion)
-            joints = start_joints + t * (end_joints - start_joints)
-            
-            # Compute velocity
-            if i > 0:
-                vel = (joints - trajectory[-1][1]) / 0.01
-            else:
-                vel = np.zeros_like(joints)
-            
-            trajectory.append((t * duration, joints, vel))
-        
-        return trajectory
-    
-    def execute_trajectory(self, trajectory, robot_interface):
-        """
-        Execute planned trajectory on robot
-        
-        Args:
-            trajectory: List of (time, joints, vel) tuples
-            robot_interface: Robot control interface
-        """
-        rate = rospy.Rate(100)  # 100 Hz
-        
-        for t, joints, vel in trajectory:
-            # Send joint commands
-            robot_interface.send_joint_command(joints, vel)
-            rate.sleep()
-    
-    def move_to_pose(self, target_pose, robot_interface):
-        """
-        Move end-effector to target pose
-        
-        Args:
-            target_pose: [x, y, z, roll, pitch, yaw]
-            robot_interface: Robot control interface
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        # Compute IK
-        target_joints = self.compute_ik(target_pose)
-        
-        if target_joints is None:
-            rospy.logerr("IK failed for target pose")
-            return False
-        
-        # Plan trajectory
-        traj = self.plan_trajectory(self.current_joint_pos, target_joints)
-        
-        # Execute
-        self.execute_trajectory(traj, robot_interface)
-        
-        self.current_joint_pos = target_joints
-        return True
-    
-    def move_to_joints(self, target_joints, robot_interface):
-        """
-        Move to target joint configuration
-        """
-        traj = self.plan_trajectory(self.current_joint_pos, target_joints)
-        self.execute_trajectory(traj, robot_interface)
-        self.current_joint_pos = target_joints
-    
-    def open_gripper(self, robot_interface):
-        """Open gripper"""
-        robot_interface.send_gripper_command(0.08)  # Open width in meters
-        rospy.sleep(0.5)
-    
-    def close_gripper(self, robot_interface):
-        """Close gripper to grasp object"""
-        robot_interface.send_gripper_command(0.0)  # Close
-        rospy.sleep(0.5)
-    
-    def pick_object(self, object_pose, robot_interface):
-        """
-        Execute pick motion for object
-        
-        Args:
-            object_pose: [x, y, z] position of object
-            robot_interface: Robot control interface
-            
-        Returns:
-            True if successful
-        """
-        x, y, z = object_pose[:3]
-        
-        # 1. Move to approach position (above object)
-        approach_pose = [x, y, z + self.config.approach_height, 0, np.pi, 0]
-        if not self.move_to_pose(approach_pose, robot_interface):
-            return False
-        
-        # 2. Open gripper
-        self.open_gripper(robot_interface)
-        
-        # 3. Move down to grasp height
-        grasp_pose = [x, y, z + self.config.grasp_height_offset, 0, np.pi, 0]
-        if not self.move_to_pose(grasp_pose, robot_interface):
-            return False
-        
-        # 4. Close gripper
-        self.close_gripper(robot_interface)
-        
-        # 5. Lift object
-        lift_pose = [x, y, z + self.config.lift_height, 0, np.pi, 0]
-        if not self.move_to_pose(lift_pose, robot_interface):
-            return False
-        
-        return True
-    
-    def place_object(self, target_pose, robot_interface):
-        """
-        Execute place motion for object
-        
-        Args:
-            target_pose: [x, y, z] position to place object
-            robot_interface: Robot control interface
-            
-        Returns:
-            True if successful
-        """
-        x, y, z = target_pose[:3]
-        
-        # 1. Move to approach position above target
-        approach_pose = [x, y, z + self.config.approach_height, 0, np.pi, 0]
-        if not self.move_to_pose(approach_pose, robot_interface):
-            return False
-        
-        # 2. Move down to place height
-        place_pose = [x, y, z + self.config.grasp_height_offset, 0, np.pi, 0]
-        if not self.move_to_pose(place_pose, robot_interface):
-            return False
-        
-        # 3. Open gripper
-        self.open_gripper(robot_interface)
-        
-        # 4. Retract
-        retract_pose = [x, y, z + self.config.approach_height, 0, np.pi, 0]
-        if not self.move_to_pose(retract_pose, robot_interface):
-            return False
-        
-        return True
+        rospy.logwarn("Cartesian motion not available in simplified mode")
+        return False
