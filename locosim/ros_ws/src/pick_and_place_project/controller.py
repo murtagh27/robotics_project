@@ -31,6 +31,7 @@ from base_controller_fixed import BaseControllerFixed  # Use BaseControllerFixed
 from perception_module import PerceptionModule
 from motion_planner import MotionPlanner
 from task_scheduler import TaskScheduler
+from object_spawner import ObjectSpawner
 
 
 class PapaController(BaseControllerFixed):
@@ -71,6 +72,13 @@ class PapaController(BaseControllerFixed):
         self.motion_planner = MotionPlanner(self, self.config)
         self.task_scheduler = TaskScheduler(self.perception, self.motion_planner, self, self.config)
 
+        # Initialize object spawner
+        self.object_spawner = ObjectSpawner(
+            table_height=self.config.table_height,
+            spawn_area_center=self.config.spawn_area_center,
+            spawn_area_size=self.config.spawn_area_size,
+        )
+
         self.task_running = False
         self.model_states_sub = None  # Will be created after Gazebo starts
 
@@ -87,6 +95,9 @@ class PapaController(BaseControllerFixed):
         """Start the Gazebo simulation with PAPA world"""
         # Import config values
         import config as conf
+
+        # Suppress Gazebo model database warnings (harmless internet connection attempts)
+        os.environ['GAZEBO_MODEL_DATABASE_URI'] = ''
 
         additional_args = [
             f'gripper:={str(conf.gripper).lower()}',
@@ -175,6 +186,38 @@ class PapaController(BaseControllerFixed):
             )
         except Exception as e:
             rospy.logerr(f"FAILED to receive model_states: {e}")
+
+    def spawn_objects(self):
+        """
+        Spawn random objects using the object spawner.
+
+        Spawns objects according to configuration parameters and updates
+        the perception module with spawned object information.
+        """
+        if not self.config.auto_spawn_objects:
+            rospy.loginfo("Auto-spawn disabled in config")
+            return
+
+        rospy.loginfo("=" * 60)
+        rospy.loginfo("SPAWNING RANDOM OBJECTS")
+        rospy.loginfo("=" * 60)
+
+        # Spawn objects
+        spawned_objects = self.object_spawner.spawn_random_objects(
+            num_objects=self.config.num_objects_to_spawn,
+            allowed_types=self.config.allowed_brick_types,
+        )
+
+        rospy.loginfo(f"Successfully spawned {len(spawned_objects)} objects")
+        for obj in spawned_objects:
+            rospy.loginfo(f"  - {obj['name']}: {obj['class']} at {obj['position']}")
+
+        rospy.loginfo("=" * 60)
+
+        # Wait a moment for objects to settle in Gazebo
+        rospy.sleep(2.0)
+
+        return spawned_objects
 
     def start_task(self):
         """
@@ -376,6 +419,10 @@ def main():
         rospy.loginfo("Initializing variables...")
         p.tau_ffwd = np.zeros(6)
         p.initVars()
+
+        # Spawn random objects if enabled in config
+        rospy.sleep(2.0)  # Give Gazebo time to stabilize
+        p.spawn_objects()
 
         rospy.loginfo("\n" + "=" * 60)
         rospy.loginfo("  PAPA (Pick and Place Automation) Ready!")

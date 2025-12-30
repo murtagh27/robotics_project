@@ -4,6 +4,7 @@ Coordinates perception, planning, and execution
 """
 
 import rospy
+import numpy as np
 from enum import Enum
 
 
@@ -71,19 +72,33 @@ class TaskScheduler:
 
         rospy.loginfo(f"Detected {len(objects)} objects")
 
-        # Match detected objects to classes and assign target positions
+        # Create task sequence: move all objects to target table
         task_sequence = []
+        target_base = self.config.target_table_pos
 
-        for obj in objects:
+        for i, obj in enumerate(objects):
             obj_class = obj.get('class', 'unknown')
 
-            # Find matching class in configuration
-            if obj_class in self.config.object_classes:
-                target_pos = self.config.object_classes[obj_class]['final_position']
-                task_sequence.append({'object': obj, 'target': target_pos, 'class': obj_class})
+            # Calculate target position (spread objects across target table)
+            # Arrange in a grid pattern on target table
+            spacing = 0.08  # 8cm spacing between objects
+            row = i // 3  # 3 objects per row
+            col = i % 3
+            offset_x = (col - 1) * spacing  # Center around target
+            offset_y = (row - 1) * spacing
 
-        # Sort by priority or position (e.g., left to right)
-        task_sequence.sort(key=lambda x: x['object']['position'][0])
+            target_pos = np.array(
+                [
+                    target_base[0] + offset_x,
+                    target_base[1] + offset_y,
+                    target_base[2],  # Same height as target table
+                ]
+            )
+
+            task_sequence.append({'object': obj, 'target': target_pos, 'class': obj_class})
+
+        # Sort by position (process objects left to right, front to back)
+        task_sequence.sort(key=lambda x: (x['object']['position'][1], x['object']['position'][0]))
 
         return task_sequence
 
