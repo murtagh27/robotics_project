@@ -70,7 +70,7 @@ num_objects_to_spawn = 5  # Number of objects to spawn
 spawn_area_center = [0.5, 0.5]  # Center of spawning area [x, y]
 spawn_area_size = [0.5, 0.5]  # Size of spawning area [width, depth]
 
-# Allowed brick types for spawning (None = all types), for futher info see documentation
+# Allowed brick types for spawning (None = all types), for further info see documentation
 allowed_brick_types = None
 
 # Gripper flag

@@ -220,7 +220,7 @@ class ObjectSpawner:
 
             launch = roslaunch.scriptapi.ROSLaunch()
             launch.start()
-            process = launch.launch(node)
+            launch.launch(node)
 
             rospy.sleep(0.5)  # Wait for spawning to complete
 
@@ -358,4 +358,5 @@ if __name__ == '__main__':
     try:
         main()
     except rospy.ROSInterruptException:
-        pass
+        # Normal shutdown on ROS interrupt (e.g., Ctrl+C)
+        rospy.loginfo("ObjectSpawner node interrupted, shutting down.")
