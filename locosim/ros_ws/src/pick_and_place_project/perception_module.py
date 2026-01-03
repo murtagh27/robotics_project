@@ -4,10 +4,14 @@ Handles object detection from camera/sensor data
 """
 
 import numpy as np
+
 import rospy
-from sensor_msgs.msg import PointCloud2
+import cv2
+from sensor_msgs.msg import Image, CameraInfo
+from cv_bridge import CvBridge
 from geometry_msgs.msg import Pose
-import sensor_msgs.point_cloud2 as pc2
+from sklearn.cluster import DBSCAN
+
 from brick_classes import BRICK_CLASSES
 
 
@@ -21,9 +25,152 @@ class PerceptionModule:
         self.detected_objects = []
         self._last_object_count = 0  # Track object count to avoid log spam
 
+        # RGB-D camera processing
+        self.bridge = CvBridge()
+        self.latest_rgb = None
+        self.latest_depth = None
+        self.camera_info = None
+
+    # ============================================================================
+    # RGB-D CAMERA CALLBACKS
+    # ============================================================================
+
+    def rgb_callback(self, msg):
+        """
+        TODO: Implement RGB image callback
+        - Convert ROS Image to OpenCV format using self.bridge
+        - Store in self.latest_rgb
+        - Handle encoding (usually 'bgr8' or 'rgb8')
+        """
+        pass
+
+    def depth_callback(self, msg):
+        """
+        TODO: Implement depth image callback
+        - Convert ROS Image to NumPy array using self.bridge
+        - Store in self.latest_depth
+        - Handle encoding (usually '32FC1' for meters or '16UC1' for millimeters)
+        - May need to convert to meters if in mm
+        """
+        pass
+
+    def camera_info_callback(self, msg):
+        """
+        TODO: Implement camera info callback
+        - Store camera intrinsics (K matrix) from msg
+        - Extract fx, fy, cx, cy for unprojecting depth to 3D
+        - Only needs to run once (camera params don't change)
+        """
+        pass
+
+    # ============================================================================
+    # IMAGE PROCESSING & 3D RECONSTRUCTION
+    # ============================================================================
+
+    def process_rgbd_frame(self):
+        """
+        TODO: Main processing pipeline - call this periodically
+        - Check if latest_rgb and latest_depth are available
+        - Call create_point_cloud()
+        - Call segment_table_plane()
+        - Call cluster_objects()
+        - Call classify_objects()
+        - Update self.detected_objects with results
+        """
+        pass
+
+    def create_point_cloud(self, rgb, depth, camera_info):
+        """
+        TODO: Convert RGB-D images to 3D point cloud
+        - Use camera_info intrinsics (fx, fy, cx, cy)
+        - For each pixel (u,v) with depth d:
+            X = (u - cx) * d / fx
+            Y = (v - cy) * d / fy
+            Z = d
+        - Filter out invalid depths (NaN, 0, too far)
+        - Return: Nx6 array (X, Y, Z, R, G, B)
+        """
+        pass
+
+    # ============================================================================
+    # TABLE SEGMENTATION
+    # ============================================================================
+
+    def segment_table_plane(self, point_cloud):
+        """
+        TODO: Remove table plane using RANSAC
+        - RANSAC algorithm:
+            1. Randomly sample 3 points
+            2. Fit plane equation: ax + by + cz + d = 0
+            3. Count inliers (points within threshold distance)
+            4. Repeat many iterations, keep best plane
+        - Filter points: keep only points ABOVE table
+        - Return: point cloud without table (Mx6 array)
+
+        Hints:
+        - Plane equation from 3 points using cross product
+        - Distance point-to-plane: |ax + by + cz + d| / sqrt(a² + b² + c²)
+        - Typical threshold: 0.01m (1cm)
+        """
+        pass
+
+    # ============================================================================
+    # OBJECT CLUSTERING
+    # ============================================================================
+
+    def cluster_objects(self, point_cloud):
+        """
+        TODO: Group points into individual objects using DBSCAN
+        - DBSCAN parameters:
+            eps: maximum distance between points in same cluster (~0.02m)
+            min_samples: minimum points per cluster (~50-100)
+        - Use only XYZ coordinates for clustering (not RGB)
+        - Return: list of clusters, each cluster is Kx6 array
+
+        Example:
+            from sklearn.cluster import DBSCAN
+            clustering = DBSCAN(eps=0.02, min_samples=50).fit(point_cloud[:, :3])
+            labels = clustering.labels_
+        """
+        pass
+
+    # ============================================================================
+    # OBJECT CLASSIFICATION
+    # ============================================================================
+
+    def classify_objects(self, clusters):
+        """
+        TODO: Classify each cluster into brick types
+        For each cluster:
+        1. Extract features:
+            - Bounding box dimensions (length, width, height)
+            - Dominant color from RGB values
+            - Number of points (size indicator)
+
+        2. Match to BRICK_CLASSES:
+            - Compare dimensions to known brick sizes
+            - Use color to distinguish between types
+            - Return class name (e.g., 'X1-Y2-Z2')
+
+        3. Compute pose:
+            - Position: centroid of cluster points
+            - Orientation: use PCA or assume upright (identity quaternion)
+
+        Return: list of dicts with 'class', 'position', 'orientation', 'name'
+        """
+        pass
+
+    # ============================================================================
+    # Public interface
+    # ============================================================================
+
     def get_detected_objects(self):
         """Return list of detected objects"""
         return self.detected_objects
+
+    # ============================================================================
+    # Helpers & Ground truth
+    # ============================================================================
 
     def _extract_brick_type_from_name(self, name):
         """
@@ -37,6 +184,7 @@ class PerceptionModule:
         """
         if name.startswith('brick_'):
             parts = name.split('_')
+            # TODO: does this have to be >=5 ?
             if len(parts) >= 4:  # brick, number, type parts
                 # Rejoin type parts with hyphens (X1, Y2, Z2 -> X1-Y2-Z2)
                 return '-'.join(parts[2:])
