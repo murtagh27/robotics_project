@@ -31,37 +31,64 @@ class PerceptionModule:
         self.latest_depth = None
         self.camera_info = None
 
+        # Subscribe to camera topics
+        rospy.Subscriber('/camera/rgb/image_raw', Image, self.rgb_callback)
+        rospy.Subscriber('/camera/depth/image_raw', Image, self.depth_callback)
+        rospy.Subscriber('/camera/rgb/camera_info', CameraInfo, self.camera_info_callback)
+
+        rospy.loginfo("PerceptionModule: Subscribed to RGB-D camera topics")
+
     # ============================================================================
     # RGB-D CAMERA CALLBACKS
     # ============================================================================
 
     def rgb_callback(self, msg):
         """
-        TODO: Implement RGB image callback
-        - Convert ROS Image to OpenCV format using self.bridge
-        - Store in self.latest_rgb
-        - Handle encoding (usually 'bgr8' or 'rgb8')
+        Convert ROS Image message to OpenCV format
         """
-        pass
+        try:
+            # Convert ROS Image to OpenCV format (BGR8)
+            self.latest_rgb = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        except Exception as e:
+            rospy.logerr(f"Failed to convert RGB image: {e}")
 
     def depth_callback(self, msg):
         """
-        TODO: Implement depth image callback
-        - Convert ROS Image to NumPy array using self.bridge
-        - Store in self.latest_depth
-        - Handle encoding (usually '32FC1' for meters or '16UC1' for millimeters)
-        - May need to convert to meters if in mm
+        Convert ROS depth image to NumPy array
         """
-        pass
+        try:
+            # Convert ROS Image to NumPy array
+            self.latest_depth = self.bridge.imgmsg_to_cv2(msg, desired_encoding='32FC1')
+            # Handle invalid depth values (NaN, inf)
+            self.latest_depth = np.nan_to_num(self.latest_depth, nan=0.0, posinf=0.0, neginf=0.0)
+        except Exception as e:
+            rospy.logerr(f"Failed to convert depth image: {e}")
 
     def camera_info_callback(self, msg):
         """
-        TODO: Implement camera info callback
-        - Store camera intrinsics (K matrix) from msg
-        - Extract fx, fy, cx, cy for unprojecting depth to 3D
-        - Only needs to run once (camera params don't change)
+        Store camera intrinsics for 3D unprojection
+        Only needs to run once as parameters don't change
         """
-        pass
+        if self.camera_info is None:
+            # Extract camera intrinsics from K matrix (3x3)
+            # K = [fx  0  cx]
+            #     [ 0 fy  cy]
+            #     [ 0  0   1]
+            self.camera_info = {
+                'fx': msg.K[0],  # Focal length X
+                'fy': msg.K[4],  # Focal length Y
+                'cx': msg.K[2],  # Principal point X
+                'cy': msg.K[5],  # Principal point Y
+                'width': msg.width,
+                'height': msg.height,
+            }
+            rospy.loginfo(
+                f"Camera intrinsics: "
+                f"fx={self.camera_info['fx']:.2f}, "
+                f"fy={self.camera_info['fy']:.2f}, "
+                f"cx={self.camera_info['cx']:.2f}, "
+                f"cy={self.camera_info['cy']:.2f}"
+            )
 
     # ============================================================================
     # IMAGE PROCESSING & 3D RECONSTRUCTION
