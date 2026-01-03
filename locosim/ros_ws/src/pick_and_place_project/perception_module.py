@@ -96,15 +96,52 @@ class PerceptionModule:
 
     def process_rgbd_frame(self):
         """
-        TODO: Main processing pipeline - call this periodically
-        - Check if latest_rgb and latest_depth are available
-        - Call create_point_cloud()
-        - Call segment_table_plane()
-        - Call cluster_objects()
-        - Call classify_objects()
-        - Update self.detected_objects with results
+        Main processing pipeline - processes latest RGB-D frame
+        Should be called periodically from controller
         """
-        pass
+        # Check if we have all required data
+        if self.latest_rgb is None or self.latest_depth is None or self.camera_info is None:
+            rospy.logwarn_throttle(
+                5.0, "Waiting for camera data (RGB, Depth, or CameraInfo not available)"
+            )
+            return
+
+        try:
+            # 1. Create 3D point cloud from RGB-D images
+            point_cloud = self.create_point_cloud(
+                self.latest_rgb, self.latest_depth, self.camera_info
+            )
+
+            if len(point_cloud) == 0:
+                rospy.logwarn("Point cloud is empty")
+                return
+
+            # 2. Remove table plane (keep only objects above table)
+            objects_cloud = self.segment_table_plane(point_cloud)
+
+            if objects_cloud is None or len(objects_cloud) == 0:
+                rospy.logdebug("No objects found above table")
+                self.detected_objects = []
+                return
+
+            # 3. Cluster points into individual objects
+            clusters = self.cluster_objects(objects_cloud)
+
+            if not clusters:
+                rospy.logdebug("No object clusters found")
+                self.detected_objects = []
+                return
+
+            # 4. Classify each cluster and compute pose
+            self.detected_objects = self.classify_objects(clusters)
+
+            # Log results (throttled to avoid spam)
+            if len(self.detected_objects) != self._last_object_count:
+                rospy.loginfo(f"Vision perception: detected {len(self.detected_objects)} objects")
+                self._last_object_count = len(self.detected_objects)
+
+        except Exception as e:
+            rospy.logerr(f"Error in RGB-D processing pipeline: {e}")
 
     def create_point_cloud(self, rgb, depth, camera_info):
         """
