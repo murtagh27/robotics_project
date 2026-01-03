@@ -108,16 +108,36 @@ class PerceptionModule:
 
     def create_point_cloud(self, rgb, depth, camera_info):
         """
-        TODO: Convert RGB-D images to 3D point cloud
-        - Use camera_info intrinsics (fx, fy, cx, cy)
-        - For each pixel (u,v) with depth d:
-            X = (u - cx) * d / fx
-            Y = (v - cy) * d / fy
-            Z = d
-        - Filter out invalid depths (NaN, 0, too far)
-        - Return: Nx6 array (X, Y, Z, R, G, B)
+        Convert RGB-D images to 3D point cloud
+
+        Returns Nx6 array: [X, Y, Z, R, G, B]
         """
-        pass
+        height, width = depth.shape
+        fx = camera_info['fx']
+        fy = camera_info['fy']
+        cx = camera_info['cx']
+        cy = camera_info['cy']
+
+        # Create meshgrid of pixel coordinates
+        u, v = np.meshgrid(np.arange(width), np.arange(height))
+
+        # Unproject to 3D
+        Z = depth
+        X = (u - cx) * Z / fx
+        Y = (v - cy) * Z / fy
+
+        # Filter out invalid depths
+        valid_mask = (Z > 0) & (Z < 5.0)  # Only points between 0 and 5 meters
+        points_3d = np.stack([X[valid_mask], Y[valid_mask], Z[valid_mask]], axis=1)
+
+        # Extract corresponding RGB colors (OpenCV uses BGR, convert to RGB)
+        colors = rgb[valid_mask][:, [2, 1, 0]]
+
+        # Combine into Nx6 array [X, Y, Z, R, G, B]
+        point_cloud = np.hstack([points_3d, colors])
+
+        rospy.logdebug(f"Created point cloud with {len(point_cloud)} points")
+        return point_cloud
 
     # ============================================================================
     # TABLE SEGMENTATION
