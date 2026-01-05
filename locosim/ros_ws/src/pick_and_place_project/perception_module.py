@@ -1,6 +1,12 @@
 """
 Perception module for object detection and localization
 Handles object detection from camera/sensor data
+
+main function calls:
+
+- process_rgbs_frame()
+- get_detected_objects()
+(- update_ground_truth())
 """
 
 import numpy as np
@@ -97,7 +103,7 @@ class PerceptionModule:
     def process_rgbd_frame(self):
         """
         Main processing pipeline - processes latest RGB-D frame
-        Should be called periodically from controller
+        Should be called from task_sceduler when necasssary
         """
         # Check if we have all required data
         if self.latest_rgb is None or self.latest_depth is None or self.camera_info is None:
@@ -135,7 +141,7 @@ class PerceptionModule:
             # 4. Classify each cluster and compute pose
             self.detected_objects = self.classify_objects(clusters)
 
-            # Log results (throttled to avoid spam)
+            # Log results
             if len(self.detected_objects) != self._last_object_count:
                 rospy.loginfo(f"Vision perception: detected {len(self.detected_objects)} objects")
                 self._last_object_count = len(self.detected_objects)
@@ -182,21 +188,129 @@ class PerceptionModule:
 
     def segment_table_plane(self, point_cloud):
         """
-        TODO: Remove table plane using RANSAC
-        - RANSAC algorithm:
-            1. Randomly sample 3 points
-            2. Fit plane equation: ax + by + cz + d = 0
-            3. Count inliers (points within threshold distance)
-            4. Repeat many iterations, keep best plane
-        - Filter points: keep only points ABOVE table
-        - Return: point cloud without table (Mx6 array)
+        Remove table plane using RANSAC
 
-        Hints:
-        - Plane equation from 3 points using cross product
-        - Distance point-to-plane: |ax + by + cz + d| / sqrt(a² + b² + c²)
-        - Typical threshold: 0.01m (1cm)
+        Returns point cloud with only objects (points above table)
         """
-        pass
+        if len(point_cloud) < 3:
+            rospy.logwarn("Not enough points for plane fitting")
+            return None
+
+        # RANSAC parameters
+        max_iterations = 100
+        distance_threshold = 0.01  # 1cm - points closer than this are inliers
+        min_inliers_ratio = 0.3  # At least 30% of points should be on table
+
+        xyz_points = point_cloud[:, :3]  # Extract XYZ coordinates
+        n_points = len(xyz_points)
+
+        best_plane = None
+        best_inliers = 0
+
+        # RANSAC iterations
+        for iteration in range(max_iterations):
+            # Step 1: Randomly sample 3 points
+            sample_indices = np.random.choice(n_points, 3, replace=False)
+            p1, p2, p3 = xyz_points[sample_indices]
+
+            # Step 2: Fit plane through the 3 points
+            plane_coeffs = self._fit_plane_from_points(p1, p2, p3)
+
+            if plane_coeffs is None:
+                continue  # Points were collinear, try again
+
+            # Step 3: Count inliers (points close to plane)
+            distances = self._point_to_plane_distance(xyz_points, plane_coeffs)
+            inliers = np.abs(distances) < distance_threshold
+            n_inliers = np.sum(inliers)
+
+            # Step 4: Keep track of best plane
+            if n_inliers > best_inliers:
+                best_inliers = n_inliers
+                best_plane = plane_coeffs
+
+        # Check if we found a valid table plane
+        if best_plane is None or best_inliers < min_inliers_ratio * n_points:
+            rospy.logwarn(f"Could not find table plane (only {best_inliers}/{n_points} inliers)")
+            return point_cloud  # Return all points if no table found
+
+        # Step 5: Filter points - keep only those above the table
+        a, b, c, d = best_plane
+
+        rospy.loginfo(f"Plane coefficients: a={a:.3f}, b={b:.3f}, c={c:.3f}, d={d:.3f}")
+
+        # Calculate distances
+        distances = self._point_to_plane_distance(xyz_points, best_plane)
+
+        # Camera is fixed looking down: Y-axis points toward table
+        # -> Table plane has normal along Y (b ≈ ±1)
+        # -> Objects are closer to camera (negative Y side)
+        # -> So we want: distances < -0.005 (negative = toward camera = above table)
+        above_table_mask = distances < -0.005
+        objects_cloud = point_cloud[above_table_mask]
+
+        rospy.loginfo(
+            f"RANSAC: Found table plane with {best_inliers} inliers, "
+            f"kept {len(objects_cloud)} object points"
+        )
+
+        return objects_cloud
+
+    def _fit_plane_from_points(self, p1, p2, p3):
+        """
+        Fit plane equation ax + by + cz + d = 0 from 3 points
+
+        Returns:
+            tuple: (a, b, c, d) plane coefficients, or None if points are collinear
+        """
+        # Create two vectors in the plane
+        v1 = p2 - p1
+        v2 = p3 - p1
+
+        # Normal vector = cross product
+        normal = np.cross(v1, v2)
+
+        # Check if points are collinear (cross product ≈ 0)
+        if np.linalg.norm(normal) < 1e-6:
+            return None
+
+        # Normalize the normal vector
+        normal = normal / np.linalg.norm(normal)
+
+        # Calculate parameters using Point-Normal Form
+        a, b, c = normal
+        d = -np.dot(normal, p1)
+
+        return a, b, c, d
+
+    def _point_to_plane_distance(self, points, plane_coeffs):
+        """
+        Calculate signed distance from points to plane
+
+        Args:
+            points: Nx3 array of points
+            plane_coeffs: (a, b, c, d) plane equation
+
+        Returns:
+            N-length array of signed distances
+        """
+        a, b, c, d = plane_coeffs
+
+        # Distance = |ax + by + cz + d| / sqrt(a² + b² + c²)
+        # Since normal is normalized, denominator = 1
+        distances = points[:, 0] * a + points[:, 1] * b + points[:, 2] * c + d
+
+        # After line 256, add debug output:
+        rospy.loginfo(
+            f"Distance statistics: min={np.min(distances):.4f}, "
+            f"max={np.max(distances):.4f}, "
+            f"mean={np.mean(distances):.4f}"
+        )
+        rospy.loginfo(f"Points above 0.02m: {np.sum(distances > 0.02)}")
+        rospy.loginfo(f"Points above 0.01m: {np.sum(distances > 0.01)}")
+        rospy.loginfo(f"Points above 0.005m: {np.sum(distances > 0.005)}")
+
+        return distances
 
     # ============================================================================
     # OBJECT CLUSTERING
