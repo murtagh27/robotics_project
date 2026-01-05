@@ -129,6 +129,8 @@ class PerceptionModule:
                 rospy.logdebug("No objects found above table")
                 self.detected_objects = []
                 return
+            else:
+                rospy.loginfo("starting clustering…")
 
             # 3. Cluster points into individual objects
             clusters = self.cluster_objects(objects_cloud)
@@ -237,8 +239,6 @@ class PerceptionModule:
         # Step 5: Filter points - keep only those above the table
         a, b, c, d = best_plane
 
-        rospy.loginfo(f"Plane coefficients: a={a:.3f}, b={b:.3f}, c={c:.3f}, d={d:.3f}")
-
         # Calculate distances
         distances = self._point_to_plane_distance(xyz_points, best_plane)
 
@@ -300,16 +300,6 @@ class PerceptionModule:
         # Since normal is normalized, denominator = 1
         distances = points[:, 0] * a + points[:, 1] * b + points[:, 2] * c + d
 
-        # After line 256, add debug output:
-        rospy.loginfo(
-            f"Distance statistics: min={np.min(distances):.4f}, "
-            f"max={np.max(distances):.4f}, "
-            f"mean={np.mean(distances):.4f}"
-        )
-        rospy.loginfo(f"Points above 0.02m: {np.sum(distances > 0.02)}")
-        rospy.loginfo(f"Points above 0.01m: {np.sum(distances > 0.01)}")
-        rospy.loginfo(f"Points above 0.005m: {np.sum(distances > 0.005)}")
-
         return distances
 
     # ============================================================================
@@ -318,19 +308,43 @@ class PerceptionModule:
 
     def cluster_objects(self, point_cloud):
         """
-        TODO: Group points into individual objects using DBSCAN
-        - DBSCAN parameters:
-            eps: maximum distance between points in same cluster (~0.02m)
-            min_samples: minimum points per cluster (~50-100)
-        - Use only XYZ coordinates for clustering (not RGB)
-        - Return: list of clusters, each cluster is Kx6 array
-
-        Example:
-            from sklearn.cluster import DBSCAN
-            clustering = DBSCAN(eps=0.02, min_samples=50).fit(point_cloud[:, :3])
-            labels = clustering.labels_
+        Cluster objects using XYZ position AND RGB color.
         """
-        pass
+        # A color_weight of 0.05 means a full color shift (0 to 255)
+        # adds 5cm of "distance" to the clustering calculation.
+        COLOR_WEIGHT = 0.05
+        EPSILON = 0.02  # 2cm search radius
+        MIN_SAMPLES = 120  # Density threshold for a valid cluster
+
+        if len(point_cloud) == 0:
+            return []
+
+        # 1. Combine Spatial and Chromatic data
+        # We normalize RGB to [0, 1] and scale by weight to align with Metric units
+        xyz = point_cloud[:, :3]
+        rgb_normalized = (point_cloud[:, 3:6] / 255.0) * COLOR_WEIGHT
+        # Create a 6D feature space (X, Y, Z, R', G', B')
+        features = np.hstack([xyz, rgb_normalized])
+
+        # 2. Density-Based Clustering (DBSCAN)
+        db = DBSCAN(eps=EPSILON, min_samples=MIN_SAMPLES).fit(features)
+        labels = db.labels_
+
+        # 3. Extract Clusters
+        # DBSCAN returns -1 for "noise" points, we skip those
+        unique_labels = np.unique(labels)
+        clusters = []
+        for label in unique_labels:
+            if label == -1:
+                continue
+
+            # Create mask for this specific object
+            cluster_mask = labels == label
+            cluster_points = point_cloud[cluster_mask]
+            clusters.append(cluster_points)
+
+        rospy.loginfo(f"Clustering: Found {len(clusters)} objects")
+        return clusters
 
     # ============================================================================
     # OBJECT CLASSIFICATION
