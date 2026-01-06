@@ -229,10 +229,10 @@ class PerceptionVisualizer:
             label.scale.z = 0.04
 
             # Color: Solid Green
-            arrow.color.r = 0.0
-            arrow.color.g = 1.0
-            arrow.color.b = 0.0
-            arrow.color.a = 1.0
+            label.color.r = 0.0
+            label.color.g = 1.0
+            label.color.b = 0.0
+            label.color.a = 1.0
 
             label.lifetime = rospy.Duration(1)
             label.text = f"GT: {obj['class']}"  # Showing Class instead of Name for clarity
