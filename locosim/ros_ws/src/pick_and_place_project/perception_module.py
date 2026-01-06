@@ -189,7 +189,8 @@ class PerceptionModule:
         Y = (v - cy) * Z / fy
 
         # Filter out invalid depths
-        valid_mask = (Z > 0) & (Z < 5.0)  # Only points between 0 and 5 meters
+        # Only points between 0 and 1.75 meters to filter out floor # TODO: dynamicly depending on robot hight?
+        valid_mask = (Z > 0) & (Z < 1.75)
         points_3d = np.stack([X[valid_mask], Y[valid_mask], Z[valid_mask]], axis=1)
 
         # Extract corresponding RGB colors (OpenCV uses BGR, convert to RGB)
@@ -216,6 +217,7 @@ class PerceptionModule:
         # RANSAC parameters
         max_iterations = 100
         distance_threshold = 0.01  # 1cm - points closer than this are inliers
+        vertical_threshold = 0.9  # normal must be roughly parallel to Z
 
         xyz_points = point_cloud[:, :3]  # Extract XYZ coordinates
         n_points = len(xyz_points)
@@ -240,6 +242,11 @@ class PerceptionModule:
                 continue
 
             normal = normal / np.linalg.norm(normal)  # Normalize
+
+            # If the normal isn't pointing mostly Up/Down (Z-axis), skip it.
+            if abs(normal[2]) < vertical_threshold:
+                continue
+
             d = -np.dot(normal, p1)  # Calculate distance offset
 
             # Step 3: Evaluate the Plane
@@ -253,17 +260,27 @@ class PerceptionModule:
                 best_inliers = inliers
                 best_plane = (normal[0], normal[1], normal[2], d)
 
-        # Safety check: Did we find any plane?
         if best_plane is None:
             return point_cloud
 
-        # Filter the Cloud (Remove the Table)
-        # Calculate signed distances to the best plane
-        distances = self._point_to_plane_distance(xyz_points, best_plane)
+        # Global Cut (Delete everything below the table)
 
-        # Keep points "above" the table
-        # Note: In optical frame, Z points down. "Above" table = Negative Distance.
-        above_table_mask = distances < -0.005
+        # Unpack plane
+        nx, ny, nz, d = best_plane
+
+        # We need the normal to point TOWARDS the camera (Up) to define "Above".
+        # In the Optical Frame, Z points DOWN. So "Up" means Negative Z.
+        # If normal Z is positive, it points down (away). Flip it.
+        if nz > 0:
+            nx, ny, nz, d = -nx, -ny, -nz, -d
+
+        corrected_plane = (nx, ny, nz, d)
+
+        # Calculate signed distances
+        distances = self._point_to_plane_distance(xyz_points, corrected_plane)
+
+        # Keep points that are 0.5cm "above" the table (closer to camera)
+        above_table_mask = distances > 0.005
         objects_cloud = point_cloud[above_table_mask]
 
         rospy.loginfo(
