@@ -2,3 +2,7 @@ build/
 devel/
 install/
 locosim/ros_ws/src/locosim
+
+# macOS system files
+.DS_Store
+**/.DS_Store
