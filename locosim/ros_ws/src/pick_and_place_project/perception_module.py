@@ -10,7 +10,6 @@ main function calls:
 """
 
 import numpy as np
-
 import rospy
 import cv2
 from sensor_msgs.msg import Image, CameraInfo
@@ -19,6 +18,7 @@ from geometry_msgs.msg import Pose
 from sklearn.cluster import DBSCAN
 
 from brick_classes import BRICK_CLASSES
+from perception_viz import PerceptionVisualizer
 
 
 class PerceptionModule:
@@ -29,7 +29,26 @@ class PerceptionModule:
     def __init__(self, config):
         self.config = config
         self.detected_objects = []
-        self._last_object_count = 0  # Track object count to avoid log spam
+        self.ground_truth_objects = []
+        self._last_object_count = 0
+
+        # --- CAMERA POSE (Relative to Robot Base) ---
+        cam_pos_relative = np.array([0.0, 0.40, 0.05])
+
+        # Rotation: Optical Frame to Robot Base Frame
+        R_optical_to_base = np.array([[0, -1, 0], [-1, 0, 0], [0, 0, -1]])
+
+        self.camera_pose = {
+            'position': cam_pos_relative,
+            'rotation': R_optical_to_base,
+        }
+
+        rospy.loginfo(
+            f"Camera transform loaded (Relative to Base). Position: {self.camera_pose['position']}"
+        )
+
+        # Initialize the Visualizer
+        self.viz = PerceptionVisualizer()
 
         # RGB-D camera processing
         self.bridge = CvBridge()
@@ -88,13 +107,6 @@ class PerceptionModule:
                 'width': msg.width,
                 'height': msg.height,
             }
-            rospy.loginfo(
-                f"Camera intrinsics: "
-                f"fx={self.camera_info['fx']:.2f}, "
-                f"fy={self.camera_info['fy']:.2f}, "
-                f"cx={self.camera_info['cx']:.2f}, "
-                f"cy={self.camera_info['cy']:.2f}"
-            )
 
     # ============================================================================
     # IMAGE PROCESSING & 3D RECONSTRUCTION
@@ -122,15 +134,17 @@ class PerceptionModule:
                 rospy.logwarn("Point cloud is empty")
                 return
 
-            # 2. Remove table plane (keep only objects above table)
+            # 2. Remove table plane
             objects_cloud = self.segment_table_plane(point_cloud)
+
+            # VISUALIZATION: Publish filtered cloud
+            if objects_cloud is not None and len(objects_cloud) > 0:
+                self.viz.publish_point_cloud(objects_cloud, self.camera_pose)
 
             if objects_cloud is None or len(objects_cloud) == 0:
                 rospy.logdebug("No objects found above table")
                 self.detected_objects = []
                 return
-            else:
-                rospy.loginfo("starting clustering…")
 
             # 3. Cluster points into individual objects
             clusters = self.cluster_objects(objects_cloud)
@@ -140,8 +154,11 @@ class PerceptionModule:
                 self.detected_objects = []
                 return
 
-            # 4. Classify each cluster and compute pose
+            # 4. Classify and Pose Estimation
             self.detected_objects = self.classify_objects(clusters)
+
+            # VISUALIZATION: Publish result markers
+            self.viz.publish_detected_objects(self.detected_objects)
 
             # Log results
             if len(self.detected_objects) != self._last_object_count:
@@ -180,8 +197,6 @@ class PerceptionModule:
 
         # Combine into Nx6 array [X, Y, Z, R, G, B]
         point_cloud = np.hstack([points_3d, colors])
-
-        rospy.logdebug(f"Created point cloud with {len(point_cloud)} points")
         return point_cloud
 
     # ============================================================================
@@ -201,51 +216,53 @@ class PerceptionModule:
         # RANSAC parameters
         max_iterations = 100
         distance_threshold = 0.01  # 1cm - points closer than this are inliers
-        min_inliers_ratio = 0.3  # At least 30% of points should be on table
 
         xyz_points = point_cloud[:, :3]  # Extract XYZ coordinates
         n_points = len(xyz_points)
-
         best_plane = None
         best_inliers = 0
 
-        # RANSAC iterations
-        for iteration in range(max_iterations):
-            # Step 1: Randomly sample 3 points
+        # RANSAC Loop (Find the dominant plane)
+        for _ in range(max_iterations):
+
+            # Step 1: Randomly sample 3 points to form a candidate plane
             sample_indices = np.random.choice(n_points, 3, replace=False)
             p1, p2, p3 = xyz_points[sample_indices]
 
-            # Step 2: Fit plane through the 3 points
-            plane_coeffs = self._fit_plane_from_points(p1, p2, p3)
+            # Step 2: Calculate Plane Geometry (Normal Vector)
+            # Create two vectors on the plane and cross-product them
+            v1 = p2 - p1
+            v2 = p3 - p1
+            normal = np.cross(v1, v2)
 
-            if plane_coeffs is None:
-                continue  # Points were collinear, try again
+            # Safety check for collinear points (length is near zero)
+            if np.linalg.norm(normal) < 1e-6:
+                continue
 
-            # Step 3: Count inliers (points close to plane)
-            distances = self._point_to_plane_distance(xyz_points, plane_coeffs)
-            inliers = np.abs(distances) < distance_threshold
-            n_inliers = np.sum(inliers)
+            normal = normal / np.linalg.norm(normal)  # Normalize
+            d = -np.dot(normal, p1)  # Calculate distance offset
 
-            # Step 4: Keep track of best plane
-            if n_inliers > best_inliers:
-                best_inliers = n_inliers
-                best_plane = plane_coeffs
+            # Step 3: Evaluate the Plane
+            # Calculate distance from ALL points to this plane
+            dists = np.abs(xyz_points.dot(normal) + d)
+            # Check how many points belong to the plane
+            inliers = np.sum(dists < distance_threshold)
 
-        # Check if we found a valid table plane
-        if best_plane is None or best_inliers < min_inliers_ratio * n_points:
-            rospy.logwarn(f"Could not find table plane (only {best_inliers}/{n_points} inliers)")
-            return point_cloud  # Return all points if no table found
+            # Step 4: Update Best Fit
+            if inliers > best_inliers:
+                best_inliers = inliers
+                best_plane = (normal[0], normal[1], normal[2], d)
 
-        # Step 5: Filter points - keep only those above the table
-        a, b, c, d = best_plane
+        # Safety check: Did we find any plane?
+        if best_plane is None:
+            return point_cloud
 
-        # Calculate distances
+        # Filter the Cloud (Remove the Table)
+        # Calculate signed distances to the best plane
         distances = self._point_to_plane_distance(xyz_points, best_plane)
 
-        # Camera is fixed looking down: Y-axis points toward table
-        # -> Table plane has normal along Y (b ≈ ±1)
-        # -> Objects are closer to camera (negative Y side)
-        # -> So we want: distances < -0.005 (negative = toward camera = above table)
+        # Keep points "above" the table
+        # Note: In optical frame, Z points down. "Above" table = Negative Distance.
         above_table_mask = distances < -0.005
         objects_cloud = point_cloud[above_table_mask]
 
@@ -255,33 +272,6 @@ class PerceptionModule:
         )
 
         return objects_cloud
-
-    def _fit_plane_from_points(self, p1, p2, p3):
-        """
-        Fit plane equation ax + by + cz + d = 0 from 3 points
-
-        Returns:
-            tuple: (a, b, c, d) plane coefficients, or None if points are collinear
-        """
-        # Create two vectors in the plane
-        v1 = p2 - p1
-        v2 = p3 - p1
-
-        # Normal vector = cross product
-        normal = np.cross(v1, v2)
-
-        # Check if points are collinear (cross product ≈ 0)
-        if np.linalg.norm(normal) < 1e-6:
-            return None
-
-        # Normalize the normal vector
-        normal = normal / np.linalg.norm(normal)
-
-        # Calculate parameters using Point-Normal Form
-        a, b, c = normal
-        d = -np.dot(normal, p1)
-
-        return a, b, c, d
 
     def _point_to_plane_distance(self, points, plane_coeffs):
         """
@@ -351,26 +341,30 @@ class PerceptionModule:
     # ============================================================================
 
     def classify_objects(self, clusters):
-        """
-        TODO: Classify each cluster into brick types
-        For each cluster:
-        1. Extract features:
-            - Bounding box dimensions (length, width, height)
-            - Dominant color from RGB values
-            - Number of points (size indicator)
+        detected_objects = []
+        for cluster in clusters:
+            points_xyz = cluster[:, :3]
+            centroid_cam = np.mean(points_xyz, axis=0)
 
-        2. Match to BRICK_CLASSES:
-            - Compare dimensions to known brick sizes
-            - Use color to distinguish between types
-            - Return class name (e.g., 'X1-Y2-Z2')
+            # Size check
+            if len(cluster) < 50:
+                continue
 
-        3. Compute pose:
-            - Position: centroid of cluster points
-            - Orientation: use PCA or assume upright (identity quaternion)
+            # Transform to World Frame (Relative to Robot Base)
+            centroid_world = self._transform_camera_to_world(centroid_cam)
 
-        Return: list of dicts with 'class', 'position', 'orientation', 'name'
-        """
-        pass
+            obj = {
+                'name': f"obj_{len(detected_objects)}",
+                'class': 'unknown',
+                'position': centroid_world,
+                'orientation': np.array([0.0, 0.0, 0.0, 1.0]),
+                'num_points': len(cluster),
+            }
+            detected_objects.append(obj)
+        return detected_objects
+
+    def _transform_camera_to_world(self, point_camera):
+        return self.camera_pose['rotation'] @ point_camera + self.camera_pose['position']
 
     # ============================================================================
     # Public interface
@@ -379,6 +373,9 @@ class PerceptionModule:
     def get_detected_objects(self):
         """Return list of detected objects"""
         return self.detected_objects
+
+    def get_gt_objects(self):
+        return self.ground_truth_objects
 
     # ============================================================================
     # Helpers & Ground truth
@@ -407,14 +404,29 @@ class PerceptionModule:
         Update object positions from Gazebo ground truth
         Useful for testing without camera
         """
-        self.detected_objects = []
+        self.ground_truth_objects = []
 
-        # Parse Gazebo model states
+        robot_pose = None
         for i, name in enumerate(gazebo_model_states.name):
-            # Detect spawned brick objects (brick_0, brick_1, etc.)
-            # Also support legacy names for backwards compatibility
+            if 'ur5' in name.lower() or name == 'robot':
+                robot_pose = gazebo_model_states.pose[i]
+                break
+
+        if robot_pose is None:
+            return []
+
+        for i, name in enumerate(gazebo_model_states.name):
             if name.startswith('brick_') or 'cube' in name or 'cylinder' in name:
                 pose = gazebo_model_states.pose[i]
+
+                # Manual Transform: Gazebo World -> Robot Base Frame
+                rel_pos = np.array(
+                    [
+                        pose.position.x - robot_pose.position.x,
+                        pose.position.y - robot_pose.position.y,
+                        pose.position.z - robot_pose.position.z,
+                    ]
+                )
 
                 # Extract brick type and look up semantic class name from BRICK_CLASSES
                 brick_class = 'unknown'
@@ -427,7 +439,7 @@ class PerceptionModule:
 
                 obj = {
                     'name': name,
-                    'position': np.array([pose.position.x, pose.position.y, pose.position.z]),
+                    'position': rel_pos,
                     'orientation': np.array(
                         [
                             pose.orientation.x,
@@ -438,12 +450,9 @@ class PerceptionModule:
                     ),
                     'class': brick_class,
                 }
-                self.detected_objects.append(obj)
-                rospy.logdebug(f"Added object: {name} at position {obj['position']}")
+                self.ground_truth_objects.append(obj)
 
-        # Only log when object count changes to avoid spam
-        if len(self.detected_objects) != self._last_object_count:
-            rospy.loginfo(f"Ground truth perception: detected {len(self.detected_objects)} objects")
-            self._last_object_count = len(self.detected_objects)
+        # VISUALIZATION: Publish GT
+        self.viz.publish_ground_truth(self.ground_truth_objects)
 
-        return self.detected_objects
+        return self.ground_truth_objects
