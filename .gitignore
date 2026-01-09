@@ -2,3 +2,11 @@ build/
 devel/
 install/
 locosim/ros_ws/src/locosim
+
+# Runtime and cache directories
+locosim/.bash_history
+locosim/.cache/
+locosim/.gazebo/
+locosim/.python_history
+locosim/.ros/
+locosim/.sdformat/
