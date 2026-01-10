@@ -290,9 +290,22 @@ class ObjectSpawner:
         self.tf_thread_running = True
 
         def broadcast_loop():
-            rate = rospy.Rate(100)  # 100 Hz
+            rate = rospy.Rate(10)
+
+            # Track the last published timestamp
+            last_time = rospy.Time(0)
+
             while self.tf_thread_running and not rospy.is_shutdown():
                 current_time = rospy.Time.now()
+
+                # If simulation is paused or slow, time might not advance.
+                # We skip publishing if the timestamp hasn't changed.
+                if current_time <= last_time:
+                    rate.sleep()
+                    continue
+
+                last_time = current_time
+
                 for item in self.tf_broadcasters:
                     broadcaster, object_name, position = item[0], item[1], item[2]
                     rotation = item[3] if len(item) > 3 else (0.0, 0.0, 0.0, 1.0)
