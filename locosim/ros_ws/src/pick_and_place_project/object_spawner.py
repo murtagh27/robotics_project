@@ -251,9 +251,39 @@ class ObjectSpawner:
             traceback.print_exc()
             return None
 
+    def spawn_one_of_each(self, allowed_types=None):
+        """
+        Spawn exactly one instance of each object type.
+        This is the recommended default for comprehensive testing.
+
+        Args:
+            allowed_types (list, optional): List of allowed brick types. All types if None.
+
+        Returns:
+            list: List of spawned object info dicts
+        """
+        if allowed_types is None:
+            allowed_types = list(BRICK_CLASSES.keys())
+
+        rospy.loginfo(f"Spawning one of each object type ({len(allowed_types)} total)...")
+
+        spawned = []
+        for brick_type in allowed_types:
+            obj_info = self.spawn_object(brick_type=brick_type)
+            if obj_info:
+                spawned.append(obj_info)
+            rospy.sleep(0.3)  # Small delay between spawns
+
+        rospy.loginfo(f"Spawned {len(spawned)}/{len(allowed_types)} object types successfully")
+
+        # Start TF broadcasting thread
+        self._start_tf_broadcast()
+
+        return spawned
+
     def spawn_random_objects(self, num_objects=5, allowed_types=None):
         """
-        Spawn multiple random objects.
+        Spawn multiple random objects (may include duplicates).
 
         Args:
             num_objects (int): Number of objects to spawn

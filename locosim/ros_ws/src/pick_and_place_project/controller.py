@@ -189,8 +189,9 @@ class PapaController(BaseControllerFixed):
 
     def spawn_objects(self):
         """
-        Spawn random objects using the object spawner.
+        Spawn objects using the object spawner.
 
+        Spawns one of each object type by default.
         Spawns objects according to configuration parameters and updates
         the perception module with spawned object information.
         """
@@ -199,12 +200,11 @@ class PapaController(BaseControllerFixed):
             return
 
         rospy.loginfo("=" * 60)
-        rospy.loginfo("SPAWNING RANDOM OBJECTS")
+        rospy.loginfo("SPAWNING OBJECTS (ONE OF EACH TYPE)")
         rospy.loginfo("=" * 60)
 
-        # Spawn objects
-        spawned_objects = self.object_spawner.spawn_random_objects(
-            num_objects=self.config.num_objects_to_spawn,
+        # Spawn one of each object type
+        spawned_objects = self.object_spawner.spawn_one_of_each(
             allowed_types=self.config.allowed_brick_types,
         )
 
