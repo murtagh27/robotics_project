@@ -6,11 +6,13 @@ Supports multiple object classes with different geometries (STL files)
 """
 
 import rospy
-import roslaunch
 import tf
 import numpy as np
 import random
 from threading import Thread
+from typing import Optional, List, Dict, Any
+from gazebo_msgs.srv import SpawnModel
+from geometry_msgs.msg import Pose, Point, Quaternion
 from brick_classes import BRICK_CLASSES
 
 
@@ -36,15 +38,37 @@ class ObjectSpawner:
         self.spawn_area_center = np.array(spawn_area_center)
         self.spawn_area_size = np.array(spawn_area_size)
 
-        self.spawned_objects = []  # List of spawned object info
-        self.tf_broadcasters = []  # TF broadcasters for each object
-        self.tf_thread = None
+        self.spawned_objects: List[Dict[str, Any]] = []  # List of spawned object info
+        self.tf_broadcasters: List[tuple] = []  # TF broadcasters for each object
+        self.tf_thread: Optional[Thread] = None
         self.tf_thread_running = False
 
+        # Single Broadcaster instance
+        self.tf_broadcaster = tf.TransformBroadcaster()
+
+        # Placeholder for the service client (Connected lazily)
+        self.spawn_client: Optional[rospy.ServiceProxy] = None
+
         rospy.loginfo("ObjectSpawner initialized")
-        rospy.loginfo(f"  Table height: {table_height}m")
-        rospy.loginfo(f"  Spawn area: {spawn_area_center} ± {spawn_area_size}")
-        rospy.loginfo(f"  Available classes: {len(BRICK_CLASSES)}")
+
+    def _ensure_connection(self):
+        """
+        Connect to Gazebo service only when needed.
+        This prevents 'Deadlock' if the spawner is created before Gazebo starts.
+        """
+        if self.spawn_client is not None:
+            return True
+
+        service_name = '/gazebo/spawn_urdf_model'
+        try:
+            rospy.loginfo(f"ObjectSpawner connecting to {service_name}...")
+            rospy.wait_for_service(service_name, timeout=5.0)
+            self.spawn_client = rospy.ServiceProxy(service_name, SpawnModel)
+            rospy.loginfo("ObjectSpawner connected to Gazebo!")
+            return True
+        except rospy.ROSException:
+            rospy.logwarn("ObjectSpawner could not connect to Gazebo! Is simulation running?")
+            return False
 
     def generate_urdf(self, brick_type, object_name):
         """
@@ -174,7 +198,10 @@ class ObjectSpawner:
         Returns:
             dict: Information about spawned object
         """
-        # Select random brick type if not specified
+        # 1. Ensure connection before trying to spawn
+        if not self._ensure_connection():
+            return None
+
         if brick_type is None:
             brick_type = random.choice(list(BRICK_CLASSES.keys()))
 
@@ -191,42 +218,21 @@ class ObjectSpawner:
         if rotation is None:
             rotation = self._random_rotation()
 
-        rospy.loginfo(f"Spawning {object_name} (type: {brick_type}) at {position}")
+        rospy.logdebug(f"Spawning {object_name}...")
 
         try:
             # Generate and upload URDF to parameter server
             urdf_content = self.generate_urdf(brick_type, object_name)
             param_name = f'{object_name}_description'
             rospy.set_param(param_name, urdf_content)
-            rospy.logdebug(f"Uploaded URDF to parameter: {param_name}")
 
-            # Spawn model in Gazebo using roslaunch
-            package = 'gazebo_ros'
-            executable = 'spawn_model'
-            node_name = f'spawn_{object_name}'
-            namespace = '/'
+            pose = Pose(Point(*position), Quaternion(*rotation))
 
-            # Convert quaternion to yaw angle for spawn command
-            yaw = np.arctan2(
-                2.0 * (rotation[3] * rotation[2] + rotation[0] * rotation[1]),
-                1.0 - 2.0 * (rotation[1] ** 2 + rotation[2] ** 2),
-            )
+            # Type guard: ensure spawn_client is not None
+            assert self.spawn_client is not None, "Spawn client not initialized"
+            self.spawn_client(object_name, urdf_content, "/", pose, "world")
 
-            args = f'-urdf -param {param_name} -model {object_name} -x {position[0]} -y {position[1]} -z {position[2]} -R 0 -P 0 -Y {yaw}'
-
-            node = roslaunch.core.Node(
-                package, executable, node_name, namespace, args=args, output="screen"
-            )
-
-            launch = roslaunch.scriptapi.ROSLaunch()
-            launch.start()
-            launch.launch(node)
-
-            rospy.sleep(0.5)  # Wait for spawning to complete
-
-            # Create TF broadcaster for this object (with rotation)
-            broadcaster = tf.TransformBroadcaster()
-            self.tf_broadcasters.append((broadcaster, object_name, position, rotation))
+            self.tf_broadcasters.append((object_name, position, rotation))
 
             # Store object information
             object_info = {
@@ -240,15 +246,10 @@ class ObjectSpawner:
                 'param_name': param_name,
             }
             self.spawned_objects.append(object_info)
-
-            rospy.loginfo(f"✓ Successfully spawned {object_name}")
             return object_info
 
         except Exception as e:
             rospy.logerr(f"Failed to spawn {object_name}: {e}")
-            import traceback
-
-            traceback.print_exc()
             return None
 
     def spawn_one_of_each(self, allowed_types=None):
@@ -303,9 +304,8 @@ class ObjectSpawner:
             obj_info = self.spawn_object(brick_type=brick_type)
             if obj_info:
                 spawned.append(obj_info)
-            rospy.sleep(0.3)  # Small delay between spawns
 
-        rospy.loginfo(f"Spawned {len(spawned)}/{num_objects} objects successfully")
+        rospy.loginfo(f"Spawned {len(spawned)} objects")
 
         # Start TF broadcasting thread
         self._start_tf_broadcast()
@@ -321,36 +321,18 @@ class ObjectSpawner:
 
         def broadcast_loop():
             rate = rospy.Rate(10)
-
-            # Track the last published timestamp
-            last_time = rospy.Time(0)
-
             while self.tf_thread_running and not rospy.is_shutdown():
                 current_time = rospy.Time.now()
-
-                # If simulation is paused or slow, time might not advance.
-                # We skip publishing if the timestamp hasn't changed.
-                if current_time <= last_time:
-                    rate.sleep()
-                    continue
-
-                last_time = current_time
-
-                for item in self.tf_broadcasters:
-                    broadcaster, object_name, position = item[0], item[1], item[2]
-                    rotation = item[3] if len(item) > 3 else (0.0, 0.0, 0.0, 1.0)
-                    broadcaster.sendTransform(
-                        position,
-                        tuple(rotation),  # Use actual rotation quaternion
-                        current_time,
-                        f'/{object_name}',
-                        '/world',
-                    )
+                for item in list(self.tf_broadcasters):
+                    if len(item) == 3:
+                        name, pos, rot = item
+                        self.tf_broadcaster.sendTransform(
+                            pos, tuple(rot), current_time, f'/{name}', '/world'
+                        )
                 rate.sleep()
 
         self.tf_thread = Thread(target=broadcast_loop, daemon=True)
         self.tf_thread.start()
-        rospy.loginfo("Started TF broadcast thread for spawned objects")
 
     def stop_tf_broadcast(self):
         """Stop the TF broadcasting thread."""
