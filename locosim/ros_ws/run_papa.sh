@@ -7,6 +7,18 @@ echo "=========================================="
 echo "PAPA (Pick and Place Automation) Launcher"
 echo "=========================================="
 
+# Check and install dependencies if needed
+DEPS_MARKER=/tmp/papa_deps_installed
+if [ ! -f "$DEPS_MARKER" ]; then
+    echo "First run detected - installing dependencies..."
+    if [ -f /home/ubuntu/ros_ws/install_dependencies.sh ]; then
+        bash /home/ubuntu/ros_ws/install_dependencies.sh
+        touch "$DEPS_MARKER"
+    else
+        echo "⚠ Warning: install_dependencies.sh not found, skipping dependency installation"
+    fi
+fi
+
 # Source ROS environment
 source /opt/ros/noetic/setup.bash
 
