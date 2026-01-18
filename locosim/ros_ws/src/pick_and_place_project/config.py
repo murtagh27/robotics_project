@@ -60,18 +60,12 @@ world_name = 'papa.world'
 
 # Perception mode
 use_ground_truth = True  # Use Gazebo model_states for ground truth (set False to use camera)
-camera_topic = (
-    '/ur5/zed_node/point_cloud/cloud_registered'  # Point cloud topic for vision-based perception
-)
 
 # Automatic object spawning configuration
 auto_spawn_objects = True  # Automatically spawn random objects at startup
-num_objects_to_spawn = 5  # Number of objects to spawn
 spawn_area_center = [0.5, 0.5]  # Center of spawning area [x, y]
 spawn_area_size = [0.5, 0.5]  # Size of spawning area [width, depth]
-
-# Allowed brick types for spawning (None = all types), for further info see documentation
-allowed_brick_types = None
+allowed_brick_types = None  # Allowed brick types for spawning (None = all types)
 
 # Gripper flag
 gripper = True
@@ -88,5 +82,3 @@ home_joint_config = q0  # Alias for motion planner
 table_initial = {'position': source_table_pos.tolist(), 'size': [0.6, 0.4, 0.02]}
 table_final = {'position': target_table_pos.tolist(), 'size': [0.6, 0.4, 0.02]}
 camera_frame = 'camera_link'
-min_object_points = 50
-segmentation_threshold = 0.02
