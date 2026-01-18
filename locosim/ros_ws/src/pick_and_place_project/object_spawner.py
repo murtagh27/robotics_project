@@ -11,7 +11,7 @@ import numpy as np
 import random
 from threading import Thread
 from typing import Optional, List, Dict, Any
-from gazebo_msgs.srv import SpawnModel
+from gazebo_msgs.srv import SpawnModel, DeleteModel
 from geometry_msgs.msg import Pose, Point, Quaternion
 from brick_classes import BRICK_CLASSES
 
@@ -149,7 +149,7 @@ class ObjectSpawner:
             ([0.8, 0.2, 0.8], 'Gazebo/Purple'),
             ([0.2, 0.8, 0.8], 'Gazebo/Turquoise'),
             ([0.9, 0.5, 0.2], 'Gazebo/Orange'),
-            ([0.9, 0.9, 0.9], 'Gazebo/White'),
+            ([0.8, 0.8, 0.8], 'Gazebo/Gray'),
         ]
         return random.choice(color_options)
 
@@ -350,9 +350,48 @@ class ObjectSpawner:
         return self.spawned_objects.copy()
 
     def clear_all_objects(self):
-        """Remove all spawned objects from Gazebo (future implementation)."""
-        # This would require gazebo_ros delete_model service
-        rospy.logwarn("clear_all_objects not yet implemented")
+        """
+        Remove all spawned objects from Gazebo.
+        Cleans up TF broadcasters, parameter server entries, and internal state.
+        """
+        if not self.spawned_objects:
+            rospy.loginfo("No objects to clear")
+            return
+
+        rospy.loginfo(f"Clearing {len(self.spawned_objects)} spawned objects...")
+
+        # Stop TF broadcasting
+        self.stop_tf_broadcast()
+
+        # Connect to delete service
+        service_name = '/gazebo/delete_model'
+        try:
+            rospy.wait_for_service(service_name, timeout=5.0)
+            delete_client = rospy.ServiceProxy(service_name, DeleteModel)
+
+            # Delete each object from Gazebo
+            for obj_info in list(self.spawned_objects):
+                try:
+                    delete_client(obj_info['name'])
+                    rospy.logdebug(f"Deleted {obj_info['name']}")
+
+                    # Clean up parameter server
+                    if rospy.has_param(obj_info['param_name']):
+                        rospy.delete_param(obj_info['param_name'])
+
+                except Exception as e:
+                    rospy.logerr(f"Failed to delete {obj_info['name']}: {e}")
+
+            # Clear internal state
+            self.spawned_objects.clear()
+            self.tf_broadcasters.clear()
+
+            rospy.loginfo("All objects cleared successfully")
+
+        except rospy.ROSException as e:
+            rospy.logerr(f"Could not connect to {service_name}: {e}")
+        except Exception as e:
+            rospy.logerr(f"Error clearing objects: {e}")
 
 
 def main():
