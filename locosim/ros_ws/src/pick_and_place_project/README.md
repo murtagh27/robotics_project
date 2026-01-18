@@ -1,209 +1,244 @@
-# Pick and Place Project
+# PAPA (Pick and Place Automation)
 
-Autonomous robotic manipulation system for sorting objects using UR5 manipulator with soft gripper.
+Autonomous robotic manipulation system for sorting objects using the UR5 manipulator.
 
 ## Quick Start
-
-### Launch the System
 
 ```bash
 bash /home/ubuntu/ros_ws/run_papa.sh
 ```
 
-This will:
-
-1. Set up the ROS environment
-2. Start Gazebo with the UR5 robot and objects
-3. Launch the interactive controller
-
-### Basic Commands
-
-In the Python console:
+**Basic Commands:**
 
 ```python
 p.start_task()   # Start pick and place sequence
 p.stop()         # Emergency stop
-p.reset()        # Reset to initial state
 p.go_home()      # Move to home position
 ```
 
-## System Overview
+---
 
-Modular pick-and-place system with three main components working together:
+## System Architecture
 
-1. **Perception Module** - Detects and localizes objects
-2. **Motion Planner** - Plans and executes robot movements
-3. **Task Scheduler** - Coordinates high-level task execution
+```
+┌─────────────────────────────────────────────────────────┐
+│          PAPA Controller (controller.py)                │
+└──────────────┬──────────────┬──────────────┬────────────┘
+               │              │              │
+       ┌───────▼──────┐   ┌───▼──────┐   ┌───▼───────────┐
+       │  Perception  │   │  Motion  │   │     Task      │
+       │   (YOLO11)   │   │ (Joints) │   │(State Machine)│
+       └──────────────┘   └──────────┘   └───────────────┘
+```
 
-and an extra component to set up the task:
+- **Perception** - YOLO11 object detection with RGB-D localization
+- **Motion Planner** - Joint-space trajectory generation
+- **Task Scheduler** - Pick-place workflow coordination
+- **Object Spawner** - Test environment setup
 
-4. **Object Spawner** - Dynamically spawns objects with known geometries
+---
 
-### Features
+## Modules
 
-✅ **Automatic Object Spawning**: Randomly spawns objects from 8 different brick types at startup  
-✅ **Multiple Object Classes**: Different geometries defined in STL files  
-✅ **Ground Truth Detection**: Uses Gazebo model states for object localization  
-✅ **Position & Orientation**: Full 6-DOF pose information (position + quaternion)  
-✅ **Dynamic TF Broadcasting**: Automatic transforms for all spawned objects
+### 1. Perception Module
 
-See [OBJECT_SPAWNING.md](OBJECT_SPAWNING.md) for object spawning details.  
-See [INTERFACES.md](INTERFACES.md) for detailed interface specifications.
+The perception module detects and localizes objects in 3D space using a YOLO11 model trained on a custom generated dataset of the brick objects. It processes RGB-D camera data from Gazebo to identify object types, positions, and orientations.
 
-### Current Status
+**Data Flow:**
 
-✅ **Working:**
+1. Subscribe to RGB and depth camera topics
+2. Run YOLO inference on RGB image
+3. Extract depth values for detected bounding boxes
+4. Project 2D detections + depth to 3D world coordinates
+5. Apply calibration offsets
+6. Return list of detected objects with poses
 
-- Automatic random object spawning with 8 brick types
-- Ground truth object detection (multiple object classes)
-- Task planning and sequencing
-- Joint-space motion execution
-- Gripper control
-- Full end-to-end pipeline
+#### Interface
 
-⚠️ **In Progress:**
+```python
+def get_detected_objects() -> List[Dict]
+```
 
-- Inverse kinematics for accurate positioning
-- Camera-based perception
-- Collision avoidance
-- Error recovery
+Returns list of detected objects with:
+
+- `name`: Object identifier (e.g., "X1-Y3-Z2-FILLET_0")
+- `class`: Brick type (e.g., "long_rectangle_filleted")
+- `position`: 3D position [x, y, z] in world frame (numpy array)
+- `orientation`: Quaternion [x, y, z, w] (numpy array)
+- `dimensions`: Physical size [width, depth, height] (numpy array)
+- `conf`: Detection confidence score (0.0 to 1.0, from YOLO)
+
+**Example:**
+
+```python
+objects = p.perception.get_detected_objects()
+# [{'name': 'X1-Y3-Z2-FILLET_0',
+#   'class': 'long_rectangle_filleted',
+#   'position': array([-0.206, 0.241, -0.905]),
+#   'orientation': array([0, 0, -0.397, 0.918]),
+#   'dimensions': array([0.03, 0.1, 0.06]),
+#   'conf': 0.9815678000450134}]
+```
+
+**ROS Topics:** `/camera/rgb/image_raw`, `/camera/depth/image_raw`, `/camera/rgb/camera_info`
+
+**Config:** Set `use_ground_truth = True` in `config.py` to use Gazebo ground truth instead of YOLO
+
+#### Testing
+
+```python
+# Check detection status
+objects = p.perception.get_detected_objects()
+print(f"Detected {len(objects)} objects")
+
+# View detailed object info
+for obj in objects:
+    pos = obj['position']
+    print(f"{obj['class']}: pos=[{pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f}], conf={obj['conf']:.3f}")
+
+# Check ground truth objects for comparison
+objects_gt = p.perception.get_ground_truth_objects()
+```
+
+**Test Script:**
+
+```bash
+cd ~/ros_ws/src/pick_and_place_project
+python test_perception.py
+```
+
+---
+
+### 2. Motion Planner
+
+TODO
+
+### 3. Task Scheduler
+
+TODO
+
+### 4. Object Spawner
+
+The object spawner dynamically creates brick objects in Gazebo for testing and simulation.
+There are 11 brick classes defined in `brick_classes.py`.
+On spawning bricks are assigend a random position, a random rotation around the Z-axis and a random color.
+All meshes include visual and collision geometry (STL format)
+
+#### Interface
+
+```python
+def spawn_object(brick_type, position=None, rotation=None) -> Dict
+def spawn_one_of_each(allowed_types=None) -> List[Dict]
+def spawn_random_objects(count, allowed_types=None) -> List[Dict]
+def get_spawned_objects() -> List[Dict]
+def clear_all_objects() -> None
+```
+
+**Example:**
+
+```python
+# Spawn all brick types (one of each)
+p.object_spawner.spawn_one_of_each()
+
+# Spawn specific object at custom position
+spawned = p.object_spawner.spawn_object(
+    brick_type='X2-Y2-Z2',
+    position=np.array([0.6, 0.6, 0.87]),
+    rotation=np.array([0.0, 0.0, 0.707, 0.707])  # 90° rotation
+)
+
+# Spawn 5 random objects
+p.object_spawner.spawn_random_objects(5)
+
+# Check what's spawned
+objects = p.object_spawner.get_spawned_objects()
+for obj in objects:
+    print(f"{obj['name']}: pos={obj['position']}")
+
+# Clear everything
+p.object_spawner.clear_all_objects()
+```
+
+**Config:** Edit spawn area and allowed types in `config.py`:
+
+```python
+auto_spawn_objects = True
+spawn_area_center = [0.5, 0.5]  # Center [x, y] in meters
+spawn_area_size = [0.5, 0.5]    # Size [width, depth] in meters
+allowed_brick_types = None      # None = all types, or specify list
+```
+
+**In Progress**
+
+[ ] Colision avoidance on spawning
+
+---
+
+## Configuration & Testing
+
+**All parameters in `config.py`:** robot joints, motion speeds, perception topics, spawn areas, target positions
+
+**Testing:**
+
+```python
+# Perception
+python test_perception.py
+
+# Motion
+p.go_home()
+p.motion_planner.move_to_joints([0.5, -1.2, -1.8, -1.0, 1.57, 0.0], p)
+
+# Spawner
+p.object_spawner.spawn_one_of_each()
+
+# Dataset generation
+python dataset_generator.py --count 1000
+```
+
+---
 
 ## Project Structure
 
 ```
 pick_and_place_project/
-├── README.md                       # Project overview and quick start
-├── INTERFACES.md                   # Detailed API specifications
-├── OBJECT_SPAWNING.md              # Object spawning system documentation
-├── project_task.md                 # Original project requirements
+├── README.md                       # This file
+├── controller.py                   # Main controller & ROS interface
+├── perception_module.py            # YOLO11 object detection
+├── motion_planner.py               # Joint-space motion planning
+├── task_scheduler.py               # State machine coordinator
+├── object_spawner.py               # Gazebo object spawning
 │
-├── controller.py                   # Main controller & robot interface
-├── perception_module.py            # Object detection module
-├── motion_planner.py               # Motion planning module
-├── task_scheduler.py               # High-level task coordination
-├── object_spawner.py               # Dynamic object spawning system
-├── config.py                       # Configuration parameters
+├── config.py                       # System configuration
+├── brick_classes.py                # Brick definitions (11 types)
 ├── papa.world                      # Gazebo world file
 │
-└── archive/                        # Archived/unused code
-    ├── README_OLD.md
-    ├── pick_and_place_gazebo.py
-    ├── pick_and_place_main.py
-    ├── motion_planner.py
-    └── config/
-        └── params.py
+├── dataset_generator.py            # Training data generation
+├── make_yolo_classes.py            # YOLO class config generator
+│
+├── training_data/                  # Generated datasets
+├── weights/best.pt                 # Trained YOLO11 model
+└── test_perception.py              # Perception testing script
 
-Launch script: ../run_papa.sh       # Located in ros_ws/
+Launch script: ../run_papa.sh
 ```
 
-## Team Collaboration
-
-### Module Responsibilities
-
-See [INTERFACES.md](INTERFACES.md) for detailed interface specifications.
-
-### Development Workflow
-
-1. **Read [INTERFACES.md](INTERFACES.md)** - Understand module boundaries
-2. **Branch per module** - e.g., `feature/perception-camera`, `feature/motion-ik`
-3. **Test independently** - Each module has test commands
-4. **Integration** - Test full pipeline after changes
-5. **Document changes** - Update INTERFACES.md if signatures change
-
-## Configuration
-
-Edit `config.py` to adjust:
-
-- **Object definitions** - Initial and target positions
-- **Motion parameters** - Speeds, heights, thresholds
-- **Perception settings** - Ground truth vs camera, topics
-- **Gripper settings** - Open/close values
-
-## Module Overview
-
-The system uses a modular architecture with three main modules coordinated by a central controller. See [INTERFACES.md](INTERFACES.md) for detailed technical specifications.
-
-**Key Modules:**
-
-### 1. Perception Module
-
-- **Current**: Ground truth detection from Gazebo model states
-- **Future**: Camera-based point cloud processing
-- **Output**: Object positions (x, y, z) and orientations (quaternion)
-- **Interface**: `perception.get_detected_objects()` returns list of detected objects
-
-### 2. Motion Planner
-
-- **Current**: Joint-space motion with linear interpolation
-- **Future**: IK-based motion planning and trajectory optimization
-- **Interface**: `pick_object(pos)`, `place_object(pos)`, `move_to_joints(joints)`
-
-### 3. Task Scheduler
-
-- **Function**: State machine coordinating pick-place workflow
-- **Sequence**: Detect → Plan → Pick → Place → Repeat
-- **Interface**: `execute_task_sequence()` runs full automation
-
-## Testing Your Module
-
-### Test Perception
-
-```python
-# Check what objects are detected
-objects = p.perception.get_detected_objects()
-print(f"Detected {len(objects)} objects")
-
-# View object details
-for obj in objects:
-    print(f"{obj['name']}: pos={obj['position']}, ori={obj['orientation']}")
-
-# Spawn additional objects for testing
-p.object_spawner.spawn_random_objects(3)
-import time; time.sleep(1)
-objects = p.perception.get_detected_objects()
-```
-
-## Troubleshooting
-
-### Robot not moving
-
-- Check if Gazebo is running: `rosnode list | grep gazebo`
-- Verify `/command` topic: `rostopic info /command`
-- Check for errors: `rostopic echo /rosout | grep ERROR`
-
-### Objects not detected
-
-- Verify ground truth mode: Check `use_ground_truth = True` in config
-- Check model states: `rostopic echo /gazebo/model_states`
-- Test perception: `p.perception.get_detected_objects()`
-
-### Simulation crashes
-
-- Increase Gazebo's real-time factor in world file
-- Reduce control loop frequency
-- Check system resources: `htop`
-
-## Development Tips
-
-### Debugging
-
-```python
-# Enable debug logging
->>> import rospy
->>> rospy.set_param('/rosout/level', 'DEBUG')
-
-# Check current state
->>> p.task_scheduler.current_state
->>> p.perception.get_detected_objects()
->>> p.get_current_joint_state()
-```
+---
 
 ## References
 
-- [Locosim Documentation](https://github.com/mfocchi/locosim)
-- [UR5 Robot Specs](https://www.universal-robots.com/products/ur5-robot/)
-- [ROS Noetic](http://wiki.ros.org/noetic)
-- [Gazebo Classic](http://gazebosim.org/)
+**Project Dependencies:**
+
+- [Locosim](https://github.com/mfocchi/locosim) - Simulation framework
+- [UR5 Robot](https://www.universal-robots.com/products/ur5-robot/) - Manipulator specs
+- [ROS Noetic](http://wiki.ros.org/noetic) - Robot Operating System
+- [Gazebo Classic](http://gazebosim.org/) - Physics simulator
+- [Ultralytics YOLO11](https://github.com/ultralytics/ultralytics) - Object detection
+
+**Brick Objects:**
+The object spawner is based on:
+
+- Repository: [brick_description](https://github.com/mfocchi/brick_description) by Michele Focchi
+- License: BSD 3-Clause
 
 ## License
 
