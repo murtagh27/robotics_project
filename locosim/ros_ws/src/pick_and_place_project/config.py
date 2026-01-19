@@ -67,8 +67,8 @@ camera_topic = (
 # Automatic object spawning configuration
 auto_spawn_objects = True  # Automatically spawn random objects at startup
 num_objects_to_spawn = 5  # Number of objects to spawn
-spawn_area_center = [0.5, 0.5]  # Center of spawning area [x, y]
-spawn_area_size = [0.5, 0.5]  # Size of spawning area [width, depth]
+spawn_area_center = [0.5, 0.35]  # Center of spawning area [x, y] - centered under robot
+spawn_area_size = [0.4, 0.4]  # Size of spawning area [width, depth]
 
 # Allowed brick types for spawning (None = all types), for further info see documentation
 allowed_brick_types = None
