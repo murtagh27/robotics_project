@@ -1,14 +1,28 @@
 #!/usr/bin/env python3
 """
-Brick class definitions for PAPA project
-Shared between object spawner and perception modules
+@file brick_classes.py
+@brief Brick class definitions for PAPA project.
+@details Shared between object spawner and perception modules. Defines all available brick types
+         with their physical properties, STL mesh files, dimensions, and YOLO class IDs.
+@author Benjamin Krech
+@date January 2026
 """
 
 import numpy as np
 
-# Available brick types with their STL mesh files and properties
-# Dimensions based on STL Bounding Boxes (including studs)
-# The 'id' attribute is used for YOLO training
+"""
+@var BRICK_CLASSES
+@brief Dictionary containing all available brick types with their properties.
+@details Each brick type is identified by its dimensional code (e.g., 'X1-Y2-Z2') and contains:
+         - id: Unique integer ID used for YOLO training and detection (0-10).
+         - class: Trivial name for identifying the bricks, based on their appearance.
+         - mesh: Filename of the STL mesh in the brick_description package.
+         - size: 3D dimensions [x, y, z] in meters as numpy array (including studs).
+         - mass: Mass in kilograms for physics simulation.
+         
+         - The dimensional code format is X[width]-Y[length]-Z[height] where 1 unit ≈ 0.03m.
+         - Possible suffixes: CHAMFER, FILLET, TWINFILLET indicate edge modifications.
+"""
 BRICK_CLASSES = {
     'X1-Y1-Z2': {
         'id': 0,

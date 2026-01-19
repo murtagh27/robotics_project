@@ -1,8 +1,11 @@
+#!/usr/bin/env python3
 """
-Generate YOLO classes.txt file from BRICK_CLASSES dictionary.
-
-This utility creates a classes.txt file required for YOLO training, where each
-line number corresponds to a class ID and contains the class name.
+@file make_yolo_classes.py
+@brief Generate YOLO classes.txt file from BRICK_CLASSES dictionary.
+@details This utility creates a classes.txt file required for YOLO training, where each
+         line number corresponds to a class ID and contains the class name.
+@author Benjamin Krech
+@date January 2026
 """
 
 from pathlib import Path
@@ -11,13 +14,11 @@ from brick_classes import BRICK_CLASSES
 
 def generate_yolo_classes(output_dir: str = "training_data") -> None:
     """
-    Generate classes.txt file for YOLO training.
-
-    Args:
-        output_dir: Directory to save classes.txt (default: "training_data")
-
-    The file format is one class name per line, where line N contains the name
-    for class ID N. Empty lines are included for any missing class IDs.
+    @brief Generate classes.txt file for YOLO training.
+    @details The file format is one class name per line, where line N contains the name
+             for class ID N. Empty lines are included for any missing class IDs.
+    @param output_dir Directory to save classes.txt (default: "training_data").
+    @return None
     """
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
