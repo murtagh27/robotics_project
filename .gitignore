@@ -9,3 +9,11 @@ locosim/ros_ws/src/locosim
 
 **__pycache__
 locosim/ros_ws/src/pick_and_place_project/training_data/
+
+# Runtime and cache directories
+locosim/.bash_history
+locosim/.cache/
+locosim/.gazebo/
+locosim/.python_history
+locosim/.ros/
+locosim/.sdformat/
