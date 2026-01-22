@@ -228,6 +228,19 @@ class MotionPlanner:
 
         return Th
 
+    def _angular_distance(self, angle1, angle2):
+        """
+        Compute the shortest angular distance between two angles.
+        Handles wrapping around 2*pi.
+        """
+        diff = angle1 - angle2
+        # Normalize to [-pi, pi]
+        while diff > np.pi:
+            diff -= 2 * np.pi
+        while diff < -np.pi:
+            diff += 2 * np.pi
+        return np.abs(diff)
+
     def select_best_solution(self, solutions, reference=None):
         """
         Select the best IK solution from multiple possibilities.
@@ -259,8 +272,9 @@ class MotionPlanner:
             if not self._check_joint_limits(sol):
                 continue
 
-            # Compute distance to reference (infinity norm)
-            distance = np.max(np.abs(sol - reference))
+            # Compute distance to reference using angular distance (handles 2*pi wrapping)
+            distances = [self._angular_distance(sol[j], reference[j]) for j in range(6)]
+            distance = np.max(distances)
 
             if distance < best_distance:
                 best_distance = distance
@@ -270,15 +284,13 @@ class MotionPlanner:
 
     def gripper_down_rotation(self):
         """
-        Get rotation matrix for gripper pointing straight down (-Z).
-        The gripper's Z-axis points down, X-axis points forward in robot frame.
+        Get rotation matrix for gripper pointing straight down.
+
+        In DH frame, +Z points down (robot is inverted).
+        Identity matrix means end-effector Z aligns with base Z (down).
         """
-        # Gripper pointing down: Z points to -Z_world, X points to +X_world
-        R = np.array([
-            [1,  0,  0],
-            [0, -1,  0],
-            [0,  0, -1]
-        ])
+        # Try identity - gripper Z aligns with DH Z (which is world down)
+        R = np.eye(3)
         return R
 
     def move_to_joints(self, target_joints, controller, duration=3.0):
@@ -322,15 +334,26 @@ class MotionPlanner:
         rospy.loginfo("Movement complete")
         return True
 
-    def pick_object(self, object_pos, controller):
+    def pick_object(self, object_pos, controller, robot_relative=True):
         """
         Execute pick sequence using actual object position
 
         Args:
-            object_pos: Object position [x, y, z]
+            object_pos: Object position [x, y, z] (robot-relative from perception by default)
             controller: Controller instance
+            robot_relative: If True, object_pos is relative to robot base (default for perception)
         """
-        rospy.loginfo(f"Picking object at position: {object_pos}")
+        rospy.loginfo(f"Picking object at position: {object_pos} (robot_relative={robot_relative})")
+
+        # Safe height for waypoint (higher than approach to avoid table collision)
+        safe_height = 0.30  # 30cm above object
+
+        # Compute safe waypoint position (high above object)
+        safe_pos = np.array([
+            object_pos[0],
+            object_pos[1],
+            object_pos[2] + safe_height
+        ])
 
         # Compute approach position (above object)
         approach_pos = np.array([
@@ -338,7 +361,7 @@ class MotionPlanner:
             object_pos[1],
             object_pos[2] + self.config.approach_height
         ])
-        
+
         # Compute grasp position (at object)
         grasp_pos = np.array([
             object_pos[0],
@@ -346,13 +369,21 @@ class MotionPlanner:
             object_pos[2] + self.config.grasp_height
         ])
 
-        # Move to approach position
+        # Step 1: Move to safe waypoint (high above object, avoids table)
+        rospy.loginfo(f"  Moving to safe waypoint: {safe_pos}")
+        safe_joints = self.simple_ik(safe_pos, gripper_down=True, robot_relative=robot_relative)
+        if safe_joints is None:
+            rospy.logerr("Failed to compute safe waypoint IK")
+            return False
+        self.move_to_joints(safe_joints, controller, duration=2.0)
+
+        # Step 2: Move down to approach position
         rospy.loginfo(f"  Moving to approach position: {approach_pos}")
-        approach_joints = self.simple_ik(approach_pos, gripper_down=True)
+        approach_joints = self.simple_ik(approach_pos, gripper_down=True, robot_relative=robot_relative)
         if approach_joints is None:
             rospy.logerr("Failed to compute approach IK")
             return False
-        self.move_to_joints(approach_joints, controller, duration=2.0)
+        self.move_to_joints(approach_joints, controller, duration=1.5)
 
         # Open gripper
         rospy.loginfo("  Opening gripper...")
@@ -361,7 +392,7 @@ class MotionPlanner:
 
         # Move down to grasp
         rospy.loginfo(f"  Moving down to grasp: {grasp_pos}")
-        grasp_joints = self.simple_ik(grasp_pos, gripper_down=True)
+        grasp_joints = self.simple_ik(grasp_pos, gripper_down=True, robot_relative=robot_relative)
         if grasp_joints is None:
             rospy.logerr("Failed to compute grasp IK")
             return False
@@ -372,22 +403,33 @@ class MotionPlanner:
         controller.send_gripper_command(self.config.gripper_close_pos)
         rospy.sleep(1.5)
 
-        # Lift object
-        rospy.loginfo("  Lifting object...")
-        self.move_to_joints(approach_joints, controller, duration=1.5)
+        # Lift object to safe height (avoids collisions when moving to place)
+        rospy.loginfo("  Lifting object to safe height...")
+        self.move_to_joints(safe_joints, controller, duration=1.5)
 
         rospy.loginfo("Pick complete")
         return True
 
-    def place_object(self, target_pos, controller):
+    def place_object(self, target_pos, controller, robot_relative=True):
         """
         Execute place sequence using actual target position
 
         Args:
-            target_pos: Target position [x, y, z]
+            target_pos: Target position [x, y, z] (robot-relative by default)
             controller: Controller instance
+            robot_relative: If True, target_pos is relative to robot base (default)
         """
-        rospy.loginfo(f"Placing object at position: {target_pos}")
+        rospy.loginfo(f"Placing object at position: {target_pos} (robot_relative={robot_relative})")
+
+        # Safe height for waypoint
+        safe_height = 0.30  # 30cm above target
+
+        # Compute safe waypoint position
+        safe_pos = np.array([
+            target_pos[0],
+            target_pos[1],
+            target_pos[2] + safe_height
+        ])
 
         # Compute place approach position (above target)
         place_approach_pos = np.array([
@@ -395,7 +437,7 @@ class MotionPlanner:
             target_pos[1],
             target_pos[2] + self.config.approach_height
         ])
-        
+
         # Compute place position (at target surface)
         place_pos = np.array([
             target_pos[0],
@@ -403,17 +445,25 @@ class MotionPlanner:
             target_pos[2] + self.config.place_height
         ])
 
-        # Move to place approach
+        # Step 1: Move to safe waypoint above target
+        rospy.loginfo(f"  Moving to safe waypoint: {safe_pos}")
+        safe_joints = self.simple_ik(safe_pos, gripper_down=True, robot_relative=robot_relative)
+        if safe_joints is None:
+            rospy.logerr("Failed to compute safe waypoint IK")
+            return False
+        self.move_to_joints(safe_joints, controller, duration=2.0)
+
+        # Step 2: Move down to place approach
         rospy.loginfo(f"  Moving to place approach: {place_approach_pos}")
-        place_approach_joints = self.simple_ik(place_approach_pos, gripper_down=True)
+        place_approach_joints = self.simple_ik(place_approach_pos, gripper_down=True, robot_relative=robot_relative)
         if place_approach_joints is None:
             rospy.logerr("Failed to compute place approach IK")
             return False
-        self.move_to_joints(place_approach_joints, controller, duration=2.0)
+        self.move_to_joints(place_approach_joints, controller, duration=1.5)
 
         # Move down to place
         rospy.loginfo(f"  Moving down to place: {place_pos}")
-        place_joints = self.simple_ik(place_pos, gripper_down=True)
+        place_joints = self.simple_ik(place_pos, gripper_down=True, robot_relative=robot_relative)
         if place_joints is None:
             rospy.logerr("Failed to compute place IK")
             return False
@@ -431,34 +481,44 @@ class MotionPlanner:
         rospy.loginfo("Place complete")
         return True
 
-    def simple_ik(self, target_pos, gripper_down=True):
+    def simple_ik(self, target_pos, gripper_down=True, robot_relative=False):
         """
         Inverse kinematics for UR5 using full analytical solution.
         Uses ur5_inverse() and selects the best solution.
 
         Args:
-            target_pos: Target XYZ position [x, y, z] in WORLD frame
+            target_pos: Target XYZ position [x, y, z]
             gripper_down: If True, orient gripper downward (for picking)
+            robot_relative: If True, target_pos is relative to robot base (from perception)
+                           If False, target_pos is in world frame (default)
 
         Returns:
             Joint angles [6] or None if unreachable
         """
         x, y, z = target_pos
 
-        # Transform from world frame to robot base frame
-        # Robot base is at (0.5, 0.35, 1.75) in world frame
-        x_world_rel = x - self.robot_base_x
-        y_world_rel = y - self.robot_base_y
-        z_robot = z - self.robot_base_z
+        if robot_relative:
+            # Input is already relative to robot base (from perception module)
+            x_rel = x
+            y_rel = y
+            z_rel = z
+        else:
+            # Transform from world frame to robot base frame
+            # Robot base is at (0.5, 0.35, 1.75) in world frame
+            x_rel = x - self.robot_base_x
+            y_rel = y - self.robot_base_y
+            z_rel = z - self.robot_base_z
 
-        # Robot base frame is rotated -90° from world frame:
-        # - Robot q1=0 points towards world +Y
-        # - Robot q1=90° points towards world +X
-        # So we swap: robot_x = world_y, robot_y = world_x
-        p_robot = np.array([y_world_rel, x_world_rel, z_robot])
+        # A2 Transform: Robot is mounted INVERTED (hanging from above)
+        # DH frame +Z points DOWN in world frame
+        # So we negate Z: p_dh = (x, y, -z)
+        p_robot = np.array([x_rel, y_rel, -z_rel])
 
-        rospy.loginfo(f"IK: target world=[{x:.3f}, {y:.3f}, {z:.3f}]")
-        rospy.loginfo(f"IK: target robot frame=[{p_robot[0]:.3f}, {p_robot[1]:.3f}, {p_robot[2]:.3f}]")
+        if robot_relative:
+            rospy.loginfo(f"IK: target (robot-relative)=[{x:.3f}, {y:.3f}, {z:.3f}]")
+        else:
+            rospy.loginfo(f"IK: target (world)=[{x:.3f}, {y:.3f}, {z:.3f}]")
+        rospy.loginfo(f"IK: robot DH frame=[{p_robot[0]:.3f}, {p_robot[1]:.3f}, {p_robot[2]:.3f}]")
 
         # Get rotation matrix for desired orientation
         if gripper_down:
