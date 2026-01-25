@@ -17,3 +17,6 @@ locosim/.gazebo/
 locosim/.python_history
 locosim/.ros/
 locosim/.sdformat/
+
+# Doxygen documentation
+/docs

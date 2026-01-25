@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 @file perception_module.py
 @brief Perception module for object detection and localization.
@@ -20,7 +21,8 @@ from brick_classes import BRICK_CLASSES
 
 
 class PerceptionModule:
-    """@class
+    """
+    @class PerceptionModule
     @brief Main perception class handling YOLO-based object detection and 3D localization.
     @details This class manages the complete perception pipeline including YOLO model initialization,
              ROS subscribers, the actual object detection as a combination of YOLO and the depth data,
@@ -30,7 +32,8 @@ class PerceptionModule:
     """
 
     def __init__(self, config=None):
-        """@brief Constructor that initializes the module with configuration data.
+        """
+        @brief Constructor that initializes the module with configuration data.
         @param config Optional configuration data, currently not in use.
         """
         self.config = config
@@ -65,7 +68,8 @@ class PerceptionModule:
         rospy.Subscriber('/camera/rgb/camera_info', CameraInfo, self.camera_info_callback)
 
     def rgb_callback(self, msg):
-        """@brief ROS callback for RGB camera images.
+        """
+        @brief ROS callback for RGB camera images.
         @param msg ROS message containing the camera frame.
         @return None
         """
@@ -75,7 +79,8 @@ class PerceptionModule:
             rospy.logerr(f"RGB Error: {e}")
 
     def depth_callback(self, msg):
-        """@brief ROS callback for camera depth images.
+        """
+        @brief ROS callback for camera depth images.
         @param msg ROS message containing the depth data.
         @return None
         """
@@ -86,7 +91,8 @@ class PerceptionModule:
             rospy.logerr(f"Depth Error: {e}")
 
     def camera_info_callback(self, msg):
-        """@brief ROS callback for camera info.
+        """
+        @brief ROS callback for camera info.
         @param msg ROS message containing the camera information.
         @return None
         """
@@ -94,24 +100,28 @@ class PerceptionModule:
             self.camera_info = msg
 
     def get_detected_objects(self):
-        """@brief Main interface for returning the detected objects.
+        """
+        @brief Main interface for returning the detected objects.
         @return List of detected objects containing information about class, position, orientation,
                 dimensions, and prediction confidence.
         """
         if self.model is None:
+            rospy.loginfo("No model found. Returning.")
             return []
         self._detect_and_process()
         return self.detected_objects
 
     def get_ground_truth_objects(self):
-        """@brief Interface for returning the Gazebo ground truth objects.
+        """
+        @brief Interface for returning the Gazebo ground truth objects.
         @return List of all objects in the world containing information about name, class, position,
                 and orientation.
         """
         return self.ground_truth_objects
 
     def _detect_and_process(self):
-        """@brief Main processing pipeline that detects and classifies all objects.
+        """
+        @brief Main processing pipeline that detects and classifies all objects.
         @details Takes the YOLO predictions as a base truth and processes them:
                  1. The height of the object is calculated via the depth information of the RGB-D camera.
                  2. The position relative to the robot is calculated by transforming the detected position.
@@ -224,7 +234,8 @@ class PerceptionModule:
         self.detected_objects = self._filter_duplicates(new_objects)
 
     def _correct_classes_by_height(self, current_name, z_height):
-        """@brief Changes the YOLO predicted class if the depth information disagrees.
+        """
+        @brief Changes the YOLO predicted class if the depth information disagrees.
         @param current_name The YOLO predicted class.
         @param z_height The z-coordinate of the brick detected by the camera.
         @return The final class, either corrected or still the same as YOLO.
@@ -249,8 +260,9 @@ class PerceptionModule:
         return potential_name
 
     def _calculate_angle_longest_edge(self, image, box):
-        """@brief Calculates the angle of a brick by fitting a rectangle to its contour and
-                 finding the longest edge.
+        """
+        @brief Calculates the angle of a brick by fitting a rectangle to its contour and
+               finding the longest edge.
         @param image The captured RGB image.
         @param box The YOLO bounding box.
         @return The angle (in radians) by which the longest side is rotated.
@@ -306,7 +318,8 @@ class PerceptionModule:
         return angle
 
     def _filter_duplicates(self, objects, threshold=0.025):
-        """@brief Filters out duplicates from a list of detected objects.
+        """
+        @brief Filters out duplicates from a list of detected objects.
         @param objects List of detected objects to filter.
         @param threshold Distance threshold (in meters) determining when two objects are the same.
         @return The filtered list without duplicates.
@@ -329,7 +342,8 @@ class PerceptionModule:
         return unique_objects
 
     def _extract_brick_type_from_name(self, name):
-        """@brief Extracts the brick type from a Gazebo object name.
+        """
+        @brief Extracts the brick type from a Gazebo object name.
         @param name The Gazebo object name (e.g., 'brick_0_X2-Y2-Z2').
         @return The extracted brick type (e.g., 'X2-Y2-Z2') or None if extraction failed.
         """
@@ -340,7 +354,8 @@ class PerceptionModule:
         return None
 
     def update_ground_truth(self, gazebo_model_states):
-        """@brief Updates ground truth object list from Gazebo simulation.
+        """
+        @brief Updates ground truth object list from Gazebo simulation.
         @param gazebo_model_states ROS ModelStates message containing all models in the simulation
                                     with their poses.
         @return None
