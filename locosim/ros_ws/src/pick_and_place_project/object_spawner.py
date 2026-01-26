@@ -282,6 +282,55 @@ class ObjectSpawner:
 
         return spawned
 
+    def spawn_in_line(self, allowed_types=None, start_x=0.05, start_y=0.60, spacing=0.08):
+        """
+        Spawn bricks in a line (ordered, not random positions).
+        Good for systematic testing.
+
+        Args:
+            allowed_types (list, optional): List of allowed brick types. All types if None.
+            start_x (float): Starting X position (world frame). Default 0.23
+            start_y (float): Starting Y position (world frame). Default 0.60 (far from raised edge at y=0.08)
+            spacing (float): Space between bricks. Default 0.07 (7cm apart for easier picking)
+
+        Note:
+            - White table surface spans approximately x=[0.0, 1.0], y=[0.0, 0.8]
+            - DANGER: Raised edge at y=0.08 (world), extends 10cm above table surface!
+            - Robot base is at (0.5, 0.35) - spawning at y=0.60 avoids the raised edge
+            - This also avoids the unreachable cylinder (XY distance < 0.133m from robot base)
+
+        Returns:
+            list: List of spawned object info dicts
+        """
+        if allowed_types is None:
+            allowed_types = list(BRICK_CLASSES.keys())
+
+        rospy.loginfo(f"Spawning {len(allowed_types)} bricks in a line...")
+
+        spawned = []
+        for i, brick_type in enumerate(allowed_types):
+            # Calculate position in a line along X axis
+            x = start_x + i * spacing
+            y = start_y
+            z = self.table_height + 0.05  # Slightly above table
+            position = np.array([x, y, z])
+
+            # No rotation (aligned with axes)
+            rotation = np.array([0.0, 0.0, 0.0, 1.0])
+
+            obj_info = self.spawn_object(
+                brick_type=brick_type,
+                position=position,
+                rotation=rotation
+            )
+            if obj_info:
+                spawned.append(obj_info)
+            rospy.sleep(0.3)
+
+        rospy.loginfo(f"Spawned {len(spawned)} bricks in a line")
+        self._start_tf_broadcast()
+        return spawned
+
     def spawn_random_objects(self, num_objects=5, allowed_types=None):
         """
         Spawn multiple random objects (may include duplicates).
@@ -322,14 +371,21 @@ class ObjectSpawner:
         def broadcast_loop():
             rate = rospy.Rate(10)
             while self.tf_thread_running and not rospy.is_shutdown():
-                current_time = rospy.Time.now()
-                for item in list(self.tf_broadcasters):
-                    if len(item) == 3:
-                        name, pos, rot = item
-                        self.tf_broadcaster.sendTransform(
-                            pos, tuple(rot), current_time, f'/{name}', '/world'
-                        )
-                rate.sleep()
+                try:
+                    current_time = rospy.Time.now()
+                    for item in list(self.tf_broadcasters):
+                        if len(item) == 3:
+                            name, pos, rot = item
+                            self.tf_broadcaster.sendTransform(
+                                pos, tuple(rot), current_time, f'/{name}', '/world'
+                            )
+                    rate.sleep()
+                except rospy.ROSException:
+                    # Topic closed during shutdown, exit gracefully
+                    break
+                except Exception as e:
+                    rospy.logwarn_once(f"TF broadcast error: {e}")
+                    break
 
         self.tf_thread = Thread(target=broadcast_loop, daemon=True)
         self.tf_thread.start()

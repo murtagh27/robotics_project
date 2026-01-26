@@ -52,19 +52,23 @@ class TaskScheduler:
 
             # Wait up to 5 seconds for the controller's existing subscriber to populate perception
             wait_time = 0
-            while len(self.perception.get_detected_objects()) == 0 and wait_time < 5.0:
+            while len(self.perception.get_ground_truth_objects()) == 0 and wait_time < 5.0:
                 rospy.sleep(0.5)
                 wait_time += 0.5
                 rospy.loginfo(f"Waiting... ({wait_time}s)")
 
-            objects_found = len(self.perception.get_detected_objects())
+            objects_found = len(self.perception.get_ground_truth_objects())
             if objects_found > 0:
-                rospy.loginfo(f"Perception ready with {objects_found} objects")
+                rospy.loginfo(f"Ground truth perception ready with {objects_found} objects")
             else:
                 rospy.logwarn("Still no objects detected after waiting")
 
         # Get detected objects from perception module
-        objects = self.perception.get_detected_objects()
+        # Use ground truth if configured, otherwise use camera-based detection
+        if self.config.use_ground_truth:
+            objects = self.perception.get_ground_truth_objects()
+        else:
+            objects = self.perception.get_detected_objects()
 
         if not objects:
             rospy.logwarn("No objects detected!")
@@ -125,6 +129,9 @@ class TaskScheduler:
         self.motion_planner.move_to_joints(self.config.home_joint_config, self.robot_interface)
 
         # Execute each pick-place operation
+        successful_tasks = 0
+        skipped_tasks = 0
+
         for idx, task in enumerate(self.task_sequence):
             self.current_task_index = idx
 
@@ -138,9 +145,9 @@ class TaskScheduler:
 
             rospy.loginfo(f"  Picking from position: {obj_pos}")
             if not self.motion_planner.pick_object(obj_pos, self.robot_interface):
-                rospy.logerr(f"Failed to pick object at task {idx}")
-                self.state = TaskState.ERROR
-                return False
+                rospy.logwarn(f"Skipping task {idx+1}: Failed to pick object (position may be unreachable)")
+                skipped_tasks += 1
+                continue  # Skip to next object instead of failing entirely
 
             self.state = TaskState.PICKING
 
@@ -149,14 +156,20 @@ class TaskScheduler:
             target_pos = task['target']
 
             rospy.loginfo(f"  Placing at position: {target_pos}")
-            if not self.motion_planner.place_object(target_pos, self.robot_interface):
-                rospy.logerr(f"Failed to place object at task {idx}")
-                self.state = TaskState.ERROR
-                return False
+            # Note: target_pos is in world frame, so robot_relative=False
+            if not self.motion_planner.place_object(target_pos, self.robot_interface, robot_relative=False):
+                rospy.logwarn(f"Task {idx+1}: Failed to place - returning to home with object")
+                # Return to home position (still holding object)
+                self.motion_planner.move_to_joints(self.config.home_joint_config, self.robot_interface)
+                skipped_tasks += 1
+                continue
 
             self.state = TaskState.PLACING
 
             rospy.loginfo(f"Task {idx+1} completed successfully")
+            successful_tasks += 1
+
+        rospy.loginfo(f"Completed {successful_tasks}/{len(self.task_sequence)} tasks ({skipped_tasks} skipped)")
 
         # Return to home
         self.state = TaskState.RETURNING_HOME
@@ -164,8 +177,11 @@ class TaskScheduler:
         self.motion_planner.move_to_joints(self.config.home_joint_config, self.robot_interface)
 
         self.state = TaskState.COMPLETED
-        rospy.loginfo("All tasks completed successfully!")
-        return True
+        if skipped_tasks == 0:
+            rospy.loginfo("All tasks completed successfully!")
+        else:
+            rospy.logwarn(f"Task sequence finished with {skipped_tasks} skipped tasks")
+        return successful_tasks > 0  # Return True if at least one task succeeded
 
     def get_current_state(self):
         """Return current state of task execution"""

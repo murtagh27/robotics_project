@@ -35,7 +35,7 @@ target_table_pos = np.array([0.5, 1.0, target_table_height])
 
 # Motion planning parameters
 approach_height = 0.15  # Height above object for approach
-grasp_height = 0.02  # Height offset for grasping
+grasp_height = -0.02  # Height offset for grasping (negative to go below brick top)
 lift_height = 0.20  # Height to lift after grasping
 place_height = 0.05  # Height above target before placing
 

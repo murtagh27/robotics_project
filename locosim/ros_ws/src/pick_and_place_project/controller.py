@@ -200,11 +200,11 @@ class PapaController(BaseControllerFixed):
             return
 
         rospy.loginfo("=" * 60)
-        rospy.loginfo("SPAWNING OBJECTS (ONE OF EACH TYPE)")
+        rospy.loginfo("SPAWNING OBJECTS IN LINE")
         rospy.loginfo("=" * 60)
 
-        # Spawn one of each object type
-        spawned_objects = self.object_spawner.spawn_one_of_each(
+        # Spawn objects in a line for systematic testing
+        spawned_objects = self.object_spawner.spawn_in_line(
             allowed_types=self.config.allowed_brick_types,
         )
 
@@ -277,10 +277,14 @@ class PapaController(BaseControllerFixed):
         self.task_running = False
         self.go_home()
 
-    def go_home(self):
-        """Move robot to home position"""
+    def go_home(self, duration=3.0):
+        """Move robot to home position
+        
+        Args:
+            duration: Time to move to home (default 3.0s, use longer if robot is stuck)
+        """
         rospy.loginfo("Moving to home position...")
-        self.motion_planner.move_to_joints(np.array(self.config.home_joint_config), self)
+        self.motion_planner.move_to_joints(np.array(self.config.home_joint_config), self, duration=duration)
 
     def send_des_jstate(self, q_des, qd_des, tau_ffwd):
         """
@@ -419,6 +423,18 @@ def main():
         rospy.loginfo("Initializing variables...")
         p.tau_ffwd = np.zeros(6)
         p.initVars()
+
+        # CRITICAL: Set up PD gains for ros_impedance_controller
+        # Without this, the robot ignores all position commands!
+        rospy.loginfo("Setting up PD gains for impedance controller...")
+        from base_controllers.utils.pidManager import PidManager
+        p.pid = PidManager(p.joint_names)
+        p.pid.setPDjoints(
+            base_conf.robot_params[p.robot_name]['kp'],
+            base_conf.robot_params[p.robot_name]['kd'],
+            np.zeros(len(p.joint_names))
+        )
+        rospy.loginfo("PD gains set successfully")
 
         # Spawn random objects if enabled in config
         rospy.sleep(2.0)  # Give Gazebo time to stabilize
