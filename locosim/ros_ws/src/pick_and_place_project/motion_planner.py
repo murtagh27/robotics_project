@@ -1024,6 +1024,11 @@ class MotionPlanner:
                 rospy.logerr(f"Collision detected: {msg}")
                 return False
 
+        # FIRST THING: Open gripper BEFORE any movement to avoid hitting objects
+        rospy.loginfo("  Opening gripper FIRST (before any movement)...")
+        controller.send_gripper_command(self.config.gripper_open_pos)
+        rospy.sleep(1.5)  # Wait for gripper to fully open
+
         # Get safe transit height from config (defaults to 1.05m if not set)
         safe_z = getattr(self.config, 'safe_transit_height', 1.05)
         
@@ -1073,11 +1078,6 @@ class MotionPlanner:
             return False
         self.move_to_joints(approach_joints, controller, duration=1.2)
 
-        # Open gripper
-        rospy.loginfo("  Opening gripper...")
-        controller.send_gripper_command(self.config.gripper_open_pos)
-        rospy.sleep(1.0)  # Wait for gripper to fully open
-
         # STEP 3: Move down to grasp
         rospy.loginfo(f"  Step 3: Moving down to grasp: {grasp_pos}")
         grasp_joints = self.simple_ik(grasp_pos, gripper_down=True)
@@ -1085,11 +1085,56 @@ class MotionPlanner:
             rospy.logerr("Failed to compute grasp IK")
             return False
         self.move_to_joints(grasp_joints, controller, duration=1.2)
+        
+        # Small pause to let robot settle before closing gripper
+        rospy.sleep(0.3)
 
         # Close gripper
         rospy.loginfo("  Closing gripper...")
         controller.send_gripper_command(self.config.gripper_close_pos)
-        rospy.sleep(1.5)  # Wait for gripper to fully close and grip object
+        rospy.sleep(2.5)  # Wait longer for gripper to fully close and grip object
+
+        # GRASP VERIFICATION: Check if gripper actually grabbed something
+        # Read actual gripper joint positions from controller
+        rospy.sleep(0.3)  # Extra wait for state update
+        
+        gripper_pos_1 = controller.q[6] if len(controller.q) >= 7 else -999
+        gripper_pos_2 = controller.q[7] if len(controller.q) >= 8 else -999
+        gripper_avg = (gripper_pos_1 + gripper_pos_2) / 2.0
+        
+        # Also check what we commanded vs what we got
+        commanded_close = self.config.gripper_close_pos
+        
+        rospy.loginfo(f"  GRASP CHECK:")
+        rospy.loginfo(f"    Commanded close pos: {commanded_close:.3f}")
+        rospy.loginfo(f"    Actual gripper joints: [{gripper_pos_1:.3f}, {gripper_pos_2:.3f}]")
+        rospy.loginfo(f"    Average gripper pos: {gripper_avg:.3f}")
+        
+        # Gripper closed fully if it reached close to commanded position (nothing blocking)
+        # If object is gripped, gripper will stop before reaching full close
+        # commanded_close = -0.8, if gripper reaches < -0.5, it's probably empty
+        grasp_margin = 0.25  # More strict: if within 0.25 of commanded, probably empty
+        
+        grasp_failed = False
+        if abs(gripper_avg - commanded_close) < grasp_margin:
+            rospy.logwarn(f"  ⚠ GRASP FAILED: Gripper closed too far (nothing blocking)")
+            rospy.logwarn(f"    gripper_avg={gripper_avg:.3f} ≈ commanded={commanded_close:.3f}")
+            grasp_failed = True
+        elif gripper_avg < -0.4:
+            # Also fail if gripper is more closed than -0.4 (should have object by then)
+            rospy.logwarn(f"  ⚠ GRASP FAILED: Gripper too closed ({gripper_avg:.3f} < -0.4)")
+            grasp_failed = True
+        
+        if grasp_failed:
+            rospy.logwarn(f"  Object was likely missed or pushed away - RETURNING FALSE")
+            # Open gripper and return to safe height
+            controller.send_gripper_command(self.config.gripper_open_pos)
+            rospy.sleep(1.0)
+            self.move_to_joints(safe_joints, controller, duration=1.5)
+            return False
+        else:
+            rospy.loginfo(f"  ✓ GRASP SUCCESS: Gripper holding object")
+            rospy.loginfo(f"    gripper_avg={gripper_avg:.3f} (object blocking closure)")
 
         # STEP 4: Lift object to safe transit height
         rospy.loginfo(f"  Step 4: Lifting to safe transit height...")
@@ -1346,44 +1391,58 @@ class MotionPlanner:
         rospy.loginfo(f"  Initial Tool Z-axis: [{z_init[0]:.3f}, {z_init[1]:.3f}, {z_init[2]:.3f}]")
         rospy.loginfo(f"  Initial Tool X-axis: [{x_init[0]:.3f}, {x_init[1]:.3f}, {x_init[2]:.3f}]")
         
-        # ==================== PHASE 1: POSITION-ONLY IK ====================
-        # Converge on position first, ignore orientation
-        rospy.loginfo(f"  PHASE 1: Position-only IK")
+        # ==================== PHASE 1: POSITION + Y-AXIS HORIZONTAL IK ====================
+        # Converge on position AND enforce gripper Y-axis is horizontal (Y_z = 0)
+        # This is a 4DOF constraint: 3 for position + 1 for Y_z = 0
+        rospy.loginfo(f"  PHASE 1: Position + Y-axis horizontal IK")
         
         max_iter_phase1 = 150
         pos_epsilon = 2e-3  # 2mm position tolerance
+        orient_epsilon = 0.05  # Y_z tolerance (close to 0)
         lambda_dls = 0.05   # Lower damping for faster convergence
         delta = 0.001
         
         for iteration in range(max_iter_phase1):
             T_current = self.urdf_fk_full(q)
             current_pos = T_current[:3, 3]
+            current_Y = T_current[:3, 1]  # Y-axis of gripper frame
             
-            # Position error only
+            # Position error (3D)
             pos_error = target_base - current_pos
             pos_error_norm = np.linalg.norm(pos_error)
             
+            # Orientation error: Y_z should be 0 (Y axis parallel to XY plane)
+            orient_error = -current_Y[2]  # We want Y_z = 0, so error = 0 - Y_z = -Y_z
+            
             if iteration == 0:
                 rospy.loginfo(f"  Initial FK pos: [{current_pos[0]:.4f}, {current_pos[1]:.4f}, {current_pos[2]:.4f}]")
-                rospy.loginfo(f"  Initial pos error: {pos_error_norm*1000:.1f} mm")
+                rospy.loginfo(f"  Initial Y-axis: [{current_Y[0]:.3f}, {current_Y[1]:.3f}, {current_Y[2]:.3f}]")
+                rospy.loginfo(f"  Initial pos error: {pos_error_norm*1000:.1f} mm, Y_z error: {abs(current_Y[2]):.3f}")
             
-            # Check position convergence
-            if pos_error_norm < pos_epsilon:
-                rospy.loginfo(f"  Phase 1 converged in {iteration} iterations (pos error: {pos_error_norm*1000:.1f}mm)")
+            # Check convergence
+            if pos_error_norm < pos_epsilon and abs(current_Y[2]) < orient_epsilon:
+                rospy.loginfo(f"  Phase 1 converged in {iteration} iterations (pos error: {pos_error_norm*1000:.1f}mm, Y_z: {current_Y[2]:.3f})")
                 break
             
-            # Numerical Jacobian (3x6) - position only
-            J = np.zeros((3, 6))
+            # Combined error vector [pos_x, pos_y, pos_z, orient]
+            error_vec = np.array([pos_error[0], pos_error[1], pos_error[2], orient_error])
+            
+            # Numerical Jacobian (4x6) - 3 for position + 1 for Y_z
+            J = np.zeros((4, 6))
             for j in range(6):
                 q_plus = q.copy()
                 q_plus[j] += delta
-                pos_plus = self.urdf_fk(q_plus)
-                J[:, j] = (pos_plus - current_pos) / delta
+                T_plus = self.urdf_fk_full(q_plus)
+                pos_plus = T_plus[:3, 3]
+                Y_plus = T_plus[:3, 1]
+                
+                J[0:3, j] = (pos_plus - current_pos) / delta
+                J[3, j] = (Y_plus[2] - current_Y[2]) / delta  # Jacobian for Y_z
             
             # Damped least squares
             JT = J.T
             JJT = J @ JT
-            dq = JT @ np.linalg.solve(JJT + lambda_dls**2 * np.eye(3), pos_error)
+            dq = JT @ np.linalg.solve(JJT + lambda_dls**2 * np.eye(4), error_vec)
             
             # Limit step size
             max_step = 0.2  # radians per iteration
@@ -1395,9 +1454,15 @@ class MotionPlanner:
             alpha = 1.0
             for _ in range(8):
                 q_new = clamp_joints(q + alpha * dq)
-                pos_new = self.urdf_fk(q_new)
-                error_new = np.linalg.norm(target_base - pos_new)
-                if error_new < pos_error_norm:
+                T_new = self.urdf_fk_full(q_new)
+                pos_new = T_new[:3, 3]
+                Y_new = T_new[:3, 1]
+                error_new_pos = np.linalg.norm(target_base - pos_new)
+                error_new_orient = abs(Y_new[2])
+                # Weighted error for line search
+                error_new = error_new_pos + 0.1 * error_new_orient
+                error_old = pos_error_norm + 0.1 * abs(current_Y[2])
+                if error_new < error_old:
                     q = q_new
                     break
                 alpha *= 0.5
@@ -1409,20 +1474,22 @@ class MotionPlanner:
         pos_phase1 = T_phase1[:3, 3]
         pos_error_phase1 = np.linalg.norm(target_base - pos_phase1)
         z_phase1 = T_phase1[:3, 2]
+        y_phase1 = T_phase1[:3, 1]
         
-        rospy.loginfo(f"  Phase 1 result: pos error={pos_error_phase1*1000:.1f}mm, Z=[{z_phase1[0]:.2f}, {z_phase1[1]:.2f}, {z_phase1[2]:.2f}]")
+        rospy.loginfo(f"  Phase 1 result: pos error={pos_error_phase1*1000:.1f}mm")
+        rospy.loginfo(f"    Z-axis: [{z_phase1[0]:.2f}, {z_phase1[1]:.2f}, {z_phase1[2]:.2f}]")
+        rospy.loginfo(f"    Y-axis: [{y_phase1[0]:.2f}, {y_phase1[1]:.2f}, {y_phase1[2]:.2f}] (Y_z should be ~0)")
         
         if pos_error_phase1 > 0.05:  # 50mm - Phase 1 failed
             rospy.logerr(f"  Phase 1 FAILED: position error {pos_error_phase1*1000:.1f}mm > 50mm")
             return None
         
-        # ==================== PHASE 2: ORIENTATION ADJUSTMENT ====================
-        # If gripper_down, check that gripper has reasonable orientation
-        # NEW APPROACH: Accept any orientation where:
+        # ==================== PHASE 2: ORIENTATION VALIDATION ====================
+        # Check that gripper has reasonable orientation:
         # 1. Position is accurate (< 30mm error)
-        # 2. Gripper X-axis (finger opening direction) is roughly horizontal (X_z close to 0)
-        #    This ensures both fingers are at same height for clean grasp
-        # 3. Gripper Z (approach direction) is pointing somewhat downward (Z_z < 0)
+        # 2. Gripper Y-axis is horizontal (Y_z close to 0) - THIS IS THE KEY CONSTRAINT
+        # 3. Gripper X-axis (finger opening) is roughly horizontal (X_z close to 0)
+        # 4. Gripper Z (approach direction) is pointing somewhat downward (Z_z < 0)
         
         if not gripper_down:
             # No orientation constraint needed
@@ -1432,10 +1499,13 @@ class MotionPlanner:
         # Check orientation after Phase 1
         T_check = self.urdf_fk_full(q)
         z_after_phase1 = T_check[:3, 2]
+        y_after_phase1 = T_check[:3, 1]  # Y-axis - should be horizontal
         x_after_phase1 = T_check[:3, 0]  # Finger opening direction
         final_pos = T_check[:3, 3]
         final_pos_error = np.linalg.norm(target_base - final_pos)
         
+        # Check if Y-axis is horizontal (Y_z close to 0) - PRIMARY CONSTRAINT
+        y_horizontal = abs(y_after_phase1[2]) < 0.15  # Y_z should be close to 0
         # Check if fingers are roughly horizontal (X_z close to 0)
         fingers_horizontal = abs(x_after_phase1[2]) < 0.5  # Allow up to ~30° tilt
         gripper_pointing_down = z_after_phase1[2] < -0.5   # Z has negative component (pointing down-ish)
@@ -1443,18 +1513,24 @@ class MotionPlanner:
         q = clamp_joints(q)
         rospy.loginfo(f"  Final joints (deg): [{', '.join([f'{np.degrees(a):.1f}' for a in q])}]")
         rospy.loginfo(f"  Final tool Z-axis: [{z_after_phase1[0]:.3f}, {z_after_phase1[1]:.3f}, {z_after_phase1[2]:.3f}]")
+        rospy.loginfo(f"  Final tool Y-axis: [{y_after_phase1[0]:.3f}, {y_after_phase1[1]:.3f}, {y_after_phase1[2]:.3f}] (Y_z={y_after_phase1[2]:.3f} should be ~0)")
         rospy.loginfo(f"  Final tool X-axis: [{x_after_phase1[0]:.3f}, {x_after_phase1[1]:.3f}, {x_after_phase1[2]:.3f}]")
         rospy.loginfo(f"  Final pos error: {final_pos_error*1000:.1f}mm")
         rospy.loginfo(f"  Fingers horizontal: {fingers_horizontal} (X_z={x_after_phase1[2]:.3f})")
         rospy.loginfo(f"  Gripper pointing down: {gripper_pointing_down} (Z_z={z_after_phase1[2]:.3f})")
+        rospy.loginfo(f"  Y-axis horizontal: {y_horizontal} (Y_z={y_after_phase1[2]:.3f})")
         
-        # Accept if position is good AND fingers are reasonably horizontal
-        if final_pos_error < 0.03 and fingers_horizontal and gripper_pointing_down:
-            rospy.loginfo(f"  ✓ IK SUCCESS (position + fingers horizontal)")
+        # Accept if position is good AND Y-axis is horizontal AND gripper points down
+        if final_pos_error < 0.03 and y_horizontal and gripper_pointing_down:
+            rospy.loginfo(f"  ✓ IK SUCCESS (position + Y horizontal + gripper down)")
+            return q
+        elif final_pos_error < 0.03 and y_horizontal:
+            # Position OK, Y horizontal, gripper not fully down - still acceptable
+            rospy.logwarn(f"  ⚠ IK WARNING: Gripper not fully down (Z_z={z_after_phase1[2]:.3f}), but Y horizontal")
             return q
         elif final_pos_error < 0.03 and gripper_pointing_down:
-            # Position OK, gripper pointing down, but fingers tilted - still try
-            rospy.logwarn(f"  ⚠ IK WARNING: Fingers tilted (X_z={x_after_phase1[2]:.3f}), but accepting")
+            # Position OK, gripper pointing down, but Y not horizontal - warn but accept
+            rospy.logwarn(f"  ⚠ IK WARNING: Y not horizontal (Y_z={y_after_phase1[2]:.3f}), but gripper down")
             return q
         elif final_pos_error < 0.03 and z_after_phase1[2] < -0.3:
             # Position OK, gripper pointing somewhat down (Z_z < -0.3) - acceptable

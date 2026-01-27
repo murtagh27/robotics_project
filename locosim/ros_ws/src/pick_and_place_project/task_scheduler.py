@@ -183,6 +183,9 @@ class TaskScheduler:
         self.motion_planner.move_to_joints(self.config.home_joint_config, self.robot_interface)
 
         # Execute each pick-place operation
+        successful_tasks = 0
+        failed_tasks = 0
+        
         for idx, task in enumerate(self.task_sequence):
             self.current_task_index = idx
 
@@ -196,23 +199,27 @@ class TaskScheduler:
 
             rospy.loginfo(f"  Picking from position: {obj_pos}")
             if not self._attempt_pick_with_retry(task['object']):
-                rospy.logerr(f"Failed to pick object at task {idx}")
-                self.state = TaskState.ERROR
-                return False
+                rospy.logwarn(f"Failed to pick object at task {idx+1} - SKIPPING to next object")
+                failed_tasks += 1
+                # Don't place if we didn't grab anything - continue to next object
+                continue
 
             self.state = TaskState.PICKING
 
-            # Place phase
+            # Place phase - only if pick succeeded
             self.state = TaskState.MOVING_TO_TARGET
             target_pos = task['target']
 
             rospy.loginfo(f"  Placing at position: {target_pos}")
             if not self._attempt_place_with_retry(target_pos):
-                rospy.logerr(f"Failed to place object at task {idx}")
-                self.state = TaskState.ERROR
-                return False
+                rospy.logerr(f"Failed to place object at task {idx+1}")
+                failed_tasks += 1
+                # Open gripper to drop whatever we're holding
+                self.robot_interface.send_gripper_command(self.config.gripper_open_pos)
+                continue
 
             self.state = TaskState.PLACING
+            successful_tasks += 1
 
             rospy.loginfo(f"Task {idx+1} completed successfully")
             
@@ -228,8 +235,17 @@ class TaskScheduler:
         self.motion_planner.move_to_joints(self.config.home_joint_config, self.robot_interface)
 
         self.state = TaskState.COMPLETED
-        rospy.loginfo("All tasks completed successfully!")
-        return True
+        total_tasks = len(self.task_sequence)
+        rospy.loginfo(f"\n{'='*60}")
+        rospy.loginfo(f"TASK SUMMARY")
+        rospy.loginfo(f"{'='*60}")
+        rospy.loginfo(f"  Total objects: {total_tasks}")
+        rospy.loginfo(f"  Successful: {successful_tasks}")
+        rospy.loginfo(f"  Failed: {failed_tasks}")
+        rospy.loginfo(f"  Success rate: {100*successful_tasks/total_tasks:.1f}%")
+        rospy.loginfo(f"{'='*60}")
+        
+        return successful_tasks > 0  # Return True if at least one succeeded
 
     def get_current_state(self):
         """Return current state of task execution"""
@@ -254,16 +270,29 @@ class TaskScheduler:
         self.current_task_index = 0
     
     def _attempt_pick_with_retry(self, obj_data, max_retries=MAX_PICK_RETRIES):
-        """Attempt to pick object with retries"""
+        """Attempt to pick object with retries using different approach strategies"""
+        original_pos = np.array(obj_data['position']).copy()
+        
+        # Different retry strategies: try different small offsets
+        retry_offsets = [
+            np.array([0, 0, 0]),           # First try: exact position
+            np.array([0.01, 0, 0]),         # Retry 1: slight X offset
+            np.array([-0.01, 0, 0]),        # Retry 2: opposite X offset
+            np.array([0, 0.01, 0]),         # Retry 3: slight Y offset
+            np.array([0, 0, -0.01]),        # Retry 4: slightly lower
+        ]
+        
         for attempt in range(max_retries):
             self.total_attempts += 1
+            
+            # Apply retry offset
+            offset = retry_offsets[min(attempt, len(retry_offsets)-1)]
+            obj_data['position'] = original_pos + offset
+            
             if attempt > 0:
                 self.retries_used += 1
                 rospy.logwarn(f"Retry attempt {attempt+1}/{max_retries} for picking {obj_data['name']}")
-                
-                # Add small offset for retry
-                offset = np.array([RETRY_OFFSET * attempt, 0, 0])
-                obj_data['position'] = obj_data['position'] + offset
+                rospy.logwarn(f"  Using offset: {offset} -> new pos: {obj_data['position']}")
             
             success = self.motion_planner.pick_object(obj_data['position'], self.robot_interface)
             
@@ -275,6 +304,8 @@ class TaskScheduler:
                 self.failed_picks += 1
                 rospy.logwarn(f"Pick attempt {attempt+1} failed for {obj_data['name']}")
         
+        # Restore original position
+        obj_data['position'] = original_pos
         rospy.logerr(f"Failed to pick {obj_data['name']} after {max_retries} attempts")
         return False
     

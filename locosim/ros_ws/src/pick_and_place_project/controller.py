@@ -553,27 +553,28 @@ class PapaController(BaseControllerFixed):
             rospy.set_param(f"{param_base}/d", d_gain)
             rospy.loginfo(f"  {joint}: P={p_gain}, I={i_gain}, D={d_gain} (heavy)")
         
-        # Set moderate gains for wrist joints (lower P, higher D to prevent oscillation)
-        wrist_p = p_gain * 0.3  # Lower P for lighter joints
-        wrist_d = d_gain * 2.0  # Higher D for damping (prevents spinning)
-        wrist_i = 0.1           # Small I to avoid windup
+        # Set moderate gains for wrist joints (MUCH lower P, MUCH higher D to prevent spinning)
+        # Wrist spinning is caused by P too high and D too low
+        wrist_p = p_gain * 0.08  # Very low P for lighter joints - prevents spinning!
+        wrist_d = d_gain * 8.0   # Very high D for damping (prevents spinning!)
+        wrist_i = 0.01           # Nearly zero I to avoid windup
         for joint in light_joints:
             param_base = f"/ur5/ros_impedance_controller/gains/{joint}"
             rospy.set_param(f"{param_base}/p", wrist_p)
             rospy.set_param(f"{param_base}/i", wrist_i)
             rospy.set_param(f"{param_base}/d", wrist_d)
-            rospy.loginfo(f"  {joint}: P={wrist_p}, I={wrist_i}, D={wrist_d} (light)")
+            rospy.loginfo(f"  {joint}: P={wrist_p}, I={wrist_i}, D={wrist_d} (wrist - high damping)")
         
-        # Set lower gains for gripper (more compliant)
+        # Set gains for gripper (needs force to grip objects, SAME gains for both fingers)
+        gripper_p = 300.0   # Higher P for strong grip force
+        gripper_i = 2.0     # Some I for steady grip
+        gripper_d = 30.0    # Damping
         for joint in gripper_joints:
             param_base = f"/ur5/ros_impedance_controller/gains/{joint}"
-        # Set higher gains for gripper (needs force to grip objects)
-        for joint in gripper_joints:
-            param_base = f"/ur5/ros_impedance_controller/gains/{joint}"
-            rospy.set_param(f"{param_base}/p", 200.0)  # Higher P for grip force
-            rospy.set_param(f"{param_base}/i", 1.0)    # Some I for steady grip
-            rospy.set_param(f"{param_base}/d", 20.0)   # Damping
-            rospy.loginfo(f"  {joint}: P=200.0, I=1.0, D=20.0 (gripper)")
+            rospy.set_param(f"{param_base}/p", gripper_p)
+            rospy.set_param(f"{param_base}/i", gripper_i)
+            rospy.set_param(f"{param_base}/d", gripper_d)
+            rospy.loginfo(f"  {joint}: P={gripper_p}, I={gripper_i}, D={gripper_d} (gripper)")
         
         rospy.loginfo("\n✓ Impedance controller gains updated")
         rospy.loginfo("  Higher P gain = stiffer, better tracking")

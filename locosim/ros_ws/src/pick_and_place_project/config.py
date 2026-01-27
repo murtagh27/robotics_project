@@ -64,10 +64,15 @@ kp = np.array([300, 300, 300, 30, 30, 1])  # Position gains
 kd = np.array([20, 20, 20, 5, 5, 0.5])  # Velocity gains
 
 # Gripper parameters (if using gripper)
-# For soft gripper: 1.0 = fully open, -1.0 = fully closed
-gripper_open_pos = 1.0
-gripper_close_pos = -0.8
+# For soft gripper: positive = open, negative = closed
+# Larger values = wider opening
+gripper_open_pos = 1.5   # Wide open to avoid hitting objects
+gripper_close_pos = -0.8  # Closed grip
 gripper_force = 10.0
+
+# Grasp verification threshold
+# If gripper closes more than this, it's empty (no object grabbed)
+gripper_empty_threshold = -0.5  # If gripper < this after closing, grasp failed
 
 # Use torque control or position control
 use_torque_control = True
