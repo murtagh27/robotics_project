@@ -27,11 +27,11 @@ p.go_home()      # Move to home position
                │              │              │
        ┌───────▼──────┐   ┌───▼──────┐   ┌───▼───────────┐
        │  Perception  │   │  Motion  │   │     Task      │
-       │   (YOLO11)   │   │ (Joints) │   │(State Machine)│
+       │ (YOLOv8-OBB) │   │ (Joints) │   │(State Machine)│
        └──────────────┘   └──────────┘   └───────────────┘
 ```
 
-- **Perception** - YOLO11 object detection with RGB-D localization
+- **Perception** - YOLOv8-OBB object detection with RGB-D localization
 - **Motion Planner** - Joint-space trajectory generation
 - **Task Scheduler** - Pick-place workflow coordination
 - **Object Spawner** - Test environment setup
@@ -42,16 +42,25 @@ p.go_home()      # Move to home position
 
 ### 1. Perception Module
 
-The perception module detects and localizes objects in 3D space using a YOLO11 model trained on a custom generated dataset of the brick objects. It processes RGB-D camera data from Gazebo to identify object types, positions, and orientations.
+The perception module detects and localizes objects in 3D space using a YOLOv8-OBB model trained on a custom generated dataset of the brick objects. It processes RGB-D camera data from Gazebo to identify object types, positions, and orientations.
 
 **Data Flow:**
 
 1. Subscribe to RGB and depth camera topics
-2. Run YOLO inference on RGB image
+2. Run YOLO OBB inference on RGB image
 3. Extract depth values for detected bounding boxes
 4. Project 2D detections + depth to 3D world coordinates
-5. Apply calibration offsets
-6. Return list of detected objects with poses
+5. Height-based class correction (distinguishes Z1 vs Z2 bricks)
+6. Extract orientation from OBB rotation angle
+7. Duplicate filtering (2.5cm threshold)
+8. Return list of detected objects with poses
+
+**Model Performance:**
+
+- YOLOv8-OBB trained on 500 synthetic images (100 epochs, Google Colab)
+- mAP50: 0.933, mAP50-95: 0.804
+- Inference: 2.2ms per image
+- Position accuracy: <1cm, Orientation accuracy: <10° for most bricks
 
 #### Interface
 
@@ -62,7 +71,7 @@ def get_detected_objects() -> List[Dict]
 Returns list of detected objects with:
 
 - `name`: Object identifier (e.g., "X1-Y3-Z2-FILLET_0")
-- `class`: Brick type (e.g., "long_rectangle_filleted")
+- `class`: Trivial brick name (e.g., "long_rectangle_filleted")
 - `position`: 3D position [x, y, z] in world frame (numpy array)
 - `orientation`: Quaternion [x, y, z, w] (numpy array)
 - `dimensions`: Physical size [width, depth, height] (numpy array)
@@ -104,8 +113,15 @@ objects_gt = p.perception.get_ground_truth_objects()
 
 ```bash
 cd ~/ros_ws/src/pick_and_place_project
-python test_perception.py
+python test_perception.py  # Shows live detections with bounding boxes and arrows
 ```
+
+**Training Dataset:**
+
+- Generated using `dataset_generator.py` (500 images from Gazebo)
+- OBB annotations with 4 corner coordinates
+- Config in `training_data/dataset_obb.yaml`
+- Regenerate: `python3 dataset_generator.py`
 
 ---
 
@@ -121,7 +137,7 @@ TODO
 
 The object spawner dynamically creates brick objects in Gazebo for testing and simulation.
 There are 11 brick classes defined in `brick_classes.py`.
-On spawning bricks are assigend a random position, a random rotation around the Z-axis and a random color.
+On spawning bricks are assigned a random position, a random rotation around the Z-axis and a random color.
 All meshes include visual and collision geometry (STL format)
 
 #### Interface
@@ -170,7 +186,7 @@ allowed_brick_types = None      # None = all types, or specify list
 
 **In Progress**
 
-[ ] Colision avoidance on spawning
+[ ] Collision avoidance on spawning
 
 ---
 
@@ -203,7 +219,7 @@ python dataset_generator.py --count 1000
 pick_and_place_project/
 ├── README.md                       # This file
 ├── controller.py                   # Main controller & ROS interface
-├── perception_module.py            # YOLO11 object detection
+├── perception_module.py            # YOLOv8-OBB object detection
 ├── motion_planner.py               # Joint-space motion planning
 ├── task_scheduler.py               # State machine coordinator
 ├── object_spawner.py               # Gazebo object spawning
@@ -213,11 +229,14 @@ pick_and_place_project/
 ├── papa.world                      # Gazebo world file
 │
 ├── dataset_generator.py            # Training data generation
-├── make_yolo_classes.py            # YOLO class config generator
+├── test_perception.py              # Perception testing script
 │
 ├── training_data/                  # Generated datasets
-├── weights/best.pt                 # Trained YOLO11 model
-└── test_perception.py              # Perception testing script
+│   ├── images/                     # Training images
+│   ├── labels/                     # OBB annotations
+│   └── dataset_obb.yaml            # YOLO config
+└── weights/
+    └── best.pt                     # Trained YOLOv8-OBB model
 
 Launch script: ../run_papa.sh
 ```
@@ -232,7 +251,7 @@ Launch script: ../run_papa.sh
 - [UR5 Robot](https://www.universal-robots.com/products/ur5-robot/) - Manipulator specs
 - [ROS Noetic](http://wiki.ros.org/noetic) - Robot Operating System
 - [Gazebo Classic](http://gazebosim.org/) - Physics simulator
-- [Ultralytics YOLO11](https://github.com/ultralytics/ultralytics) - Object detection
+- [Ultralytics YOLO](https://github.com/ultralytics/ultralytics) - Object detection
 
 **Brick Objects:**
 The object spawner is based on:
