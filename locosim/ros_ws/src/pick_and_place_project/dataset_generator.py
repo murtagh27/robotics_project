@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 @file dataset_generator.py
-@brief Dataset generator for creating a synthetic YOLO training dataset.
+@brief Dataset generator for creating a synthetic YOLO OBB training dataset.
 @details Uses the object spawner to generate a random setup of bricks on the table, then captures
          an RGB image. 3D brick corners taken from Gazebo model states are projected to 2D
-         bounding boxes and then transformed to YOLO format (class_id x_center y_center width height)
-         and are saved as labels. Also creates debug images with drawn bounding boxes.
+         bounding boxes and then transformed to YOLO OBB format
+         (class_id x_center y_center width height rotation_radians)
+         and are saved as labels. Also creates debug images with drawn bounding boxes and rotation.
 @author Benjamin Krech
 @date January 2026
 """
@@ -15,6 +16,7 @@ import cv2
 import numpy as np
 import tf.transformations as tr
 import random
+import math
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -190,13 +192,14 @@ class DatasetGenerator:
 
     def capture_frame(self, frame_id: int):
         """
-        @brief Captures and processes a single frame, generating YOLO annotations for it.
+        @brief Captures and processes a single frame, generating YOLO OBB annotations for it.
         @details 1. Validates all data is available.
                  2. Loops through all brick models found in Gazebo.
                  3. Calculates all the corners of the brick.
                  4. Converts corners to 2D.
-                 5. Takes maximum coordinates and transforms them to YOLO format.
-                 6. Saves image, labels, and debugging image.
+                 5. Extracts rotation angle from Gazebo orientation (Z-axis rotation).
+                 6. Takes maximum coordinates and transforms them to YOLO OBB format.
+                 7. Saves image, labels, and debugging image.
         @param frame_id Integer numbering the frame for filename.
         @return None - saves files to disk.
         """
@@ -233,6 +236,10 @@ class DatasetGenerator:
 
             T_obj = tr.quaternion_matrix(quat)
             T_obj[0:3, 3] = pos
+
+            # Extract Z-axis rotation (yaw) from quaternion
+            euler = tr.euler_from_quaternion(quat, 'sxyz')
+            z_rotation = euler[2]  # Z-axis rotation from Gazebo
 
             # Get 3D Corners
             dims = BRICK_CLASSES[brick_type]['size']
@@ -274,27 +281,62 @@ class DatasetGenerator:
             if max_x <= min_x or max_y <= min_y:
                 continue
 
-            # YOLO Format: class x_center y_center width height (normalized)
-            bw = (max_x - min_x) / img_w
-            bh = (max_y - min_y) / img_h
-            bx = (min_x + max_x) / 2.0 / img_w
-            by = (min_y + max_y) / 2.0 / img_h
+            # Get the 2D projected corners to calculate oriented bounding box
+            if len(pixel_coords) >= 4:
+                # Fit oriented bounding box to the projected corners
+                pixel_coords_for_rect = np.array(pixel_coords, dtype=np.float32)
+                rect = cv2.minAreaRect(pixel_coords_for_rect)
+                box_corners = cv2.boxPoints(rect)  # Get 4 corner points
 
-            labels.append(f"{class_id} {bx:.6f} {by:.6f} {bw:.6f} {bh:.6f}")
+                # Normalize corner coordinates
+                box_corners_norm = box_corners.copy()
+                box_corners_norm[:, 0] /= img_w  # Normalize x
+                box_corners_norm[:, 1] /= img_h  # Normalize y
+
+                # Extract angle for visualization
+                (_, _), (w_rect, h_rect), angle_deg = rect
+                rotation_radians = math.radians(angle_deg)
+
+                # YOLO OBB Format: class x1 y1 x2 y2 x3 y3 x4 y4 (normalized corner coordinates)
+                # Flatten the 4 corner points into 8 values
+                obb_coords = box_corners_norm.flatten()
+                labels.append(
+                    f"{class_id} {obb_coords[0]:.6f} {obb_coords[1]:.6f} {obb_coords[2]:.6f} {obb_coords[3]:.6f} {obb_coords[4]:.6f} {obb_coords[5]:.6f} {obb_coords[6]:.6f} {obb_coords[7]:.6f}"
+                )
+            else:
+                # Fallback: not enough corners, skip this object
+                continue
 
             # Draw Debug Visuals
-            cv2.rectangle(
-                debug_img, (int(min_x), int(min_y)), (int(max_x), int(max_y)), (0, 255, 0), 2
-            )
-            cv2.putText(
-                debug_img,
-                brick_type,
-                (int(min_x), int(min_y) - 5),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (0, 0, 255),
-                1,
-            )
+            # Draw the oriented bounding box (not axis-aligned)
+            if len(pixel_coords) >= 4:
+                box_corners_int = box_corners.astype(int)
+                cv2.drawContours(debug_img, [box_corners_int], 0, (0, 255, 0), 2)
+
+                # Draw orientation arrow from center
+                center_x = int(np.mean(box_corners[:, 0]))
+                center_y = int(np.mean(box_corners[:, 1]))
+                arrow_length = min(max_x - min_x, max_y - min_y) * 0.4
+                arrow_end_x = int(center_x + arrow_length * math.cos(rotation_radians))
+                arrow_end_y = int(center_y + arrow_length * math.sin(rotation_radians))
+                cv2.arrowedLine(
+                    debug_img,
+                    (center_x, center_y),
+                    (arrow_end_x, arrow_end_y),
+                    (255, 0, 0),
+                    2,
+                    tipLength=0.3,
+                )
+
+                cv2.putText(
+                    debug_img,
+                    f"{brick_type} ({math.degrees(rotation_radians):.0f}deg)",
+                    (int(min_x), int(min_y) - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (0, 0, 255),
+                    1,
+                )
 
         # Save to disk
         file_id = f"{frame_id:05d}"
