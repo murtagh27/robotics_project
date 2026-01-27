@@ -13,10 +13,15 @@ import rospy
 import cv2
 import os
 import math
+from collections import deque
 from sensor_msgs.msg import Image, CameraInfo
 from cv_bridge import CvBridge
 from ultralytics import YOLO
 from brick_classes import BRICK_CLASSES
+
+# Freshness and filtering constants
+FRESHNESS_THRESHOLD = 2.0  # seconds - how long detection is considered fresh
+EMA_ALPHA = 0.3  # Exponential Moving Average smoothing factor
 
 
 class PerceptionModule:
@@ -37,6 +42,13 @@ class PerceptionModule:
         self.detected_objects = []
         self.ground_truth_objects = []
         self.robot_pose = None
+        
+        # Freshness tracking
+        self.last_detection_time = None
+        self.last_ground_truth_time = None
+        
+        # Position history for EMA filtering
+        self.position_history = {}  # object_name -> deque of positions
 
         # Configuration
         weights_path = os.path.join(os.path.dirname(__file__), 'weights/best.pt')
@@ -63,6 +75,42 @@ class PerceptionModule:
         rospy.Subscriber('/camera/rgb/image_raw', Image, self.rgb_callback)
         rospy.Subscriber('/camera/depth/image_raw', Image, self.depth_callback)
         rospy.Subscriber('/camera/rgb/camera_info', CameraInfo, self.camera_info_callback)
+
+    def get_detection_age(self):
+        """Get time since last detection"""
+        if self.last_detection_time is None:
+            return float('inf')
+        return (rospy.Time.now() - self.last_detection_time).to_sec()
+    
+    def is_fresh(self):
+        """Check if last detection is fresh"""
+        return self.get_detection_age() < FRESHNESS_THRESHOLD
+    
+    def _apply_ema_filter(self, object_name, new_position):
+        """Apply Exponential Moving Average filter to position"""
+        if object_name not in self.position_history:
+            self.position_history[object_name] = deque(maxlen=5)
+            self.position_history[object_name].append(new_position)
+            return new_position
+        
+        history = self.position_history[object_name]
+        if len(history) == 0:
+            history.append(new_position)
+            return new_position
+        
+        # EMA: filtered = alpha * new + (1-alpha) * old
+        old_position = history[-1]
+        filtered = EMA_ALPHA * new_position + (1 - EMA_ALPHA) * old_position
+        history.append(filtered)
+        return filtered
+    
+    def clear_position_history(self, object_name=None):
+        """Clear position history for object or all objects"""
+        if object_name:
+            if object_name in self.position_history:
+                del self.position_history[object_name]
+        else:
+            self.position_history.clear()
 
     def rgb_callback(self, msg):
         """@brief ROS callback for RGB camera images.
@@ -98,6 +146,13 @@ class PerceptionModule:
         @return List of detected objects containing information about class, position, orientation,
                 dimensions, and prediction confidence.
         """
+        self.last_detection_time = rospy.Time.now()
+        
+        # If using ground truth mode, return ground truth objects instead of camera-based detection
+        if self.config is not None and getattr(self.config, 'use_ground_truth', False):
+            return self.ground_truth_objects
+        
+        # Otherwise use camera-based detection
         if self.model is None:
             return []
         self._detect_and_process()
@@ -210,14 +265,20 @@ class PerceptionModule:
             angle = self._calculate_angle_longest_edge(image, box)
             qz = np.sin(angle / 2.0)
             qw = np.cos(angle / 2.0)
+            
+            # Apply EMA filter to position
+            object_name = f"{final_name}_{len(new_objects)}"
+            filtered_pos = self._apply_ema_filter(object_name, pos_final)
 
             obj = {
-                'name': f"{final_name}_{len(new_objects)}",
+                'name': object_name,
                 'class': class_str,
-                'position': pos_final,
+                'position': filtered_pos,
                 'orientation': np.array([0.0, 0.0, qz, qw]),
                 'dimensions': dims,
                 'conf': conf,
+                'timestamp': rospy.Time.now(),
+                'is_fresh': True,
             }
             new_objects.append(obj)
 
@@ -345,6 +406,7 @@ class PerceptionModule:
                                     with their poses.
         @return None
         """
+        self.last_ground_truth_time = rospy.Time.now()
         self.ground_truth_objects = []
         robot_pose_obj = None
 
@@ -368,11 +430,12 @@ class PerceptionModule:
         for i, name in enumerate(gazebo_model_states.name):
             if name.startswith('brick_'):
                 pose = gazebo_model_states.pose[i]
-                rel_pos = np.array(
+                # Use world coordinates (not robot-relative)
+                world_pos = np.array(
                     [
-                        pose.position.x - robot_pose_obj.position.x,
-                        pose.position.y - robot_pose_obj.position.y,
-                        pose.position.z - robot_pose_obj.position.z,
+                        pose.position.x,
+                        pose.position.y,
+                        pose.position.z,
                     ]
                 )
 
@@ -384,7 +447,7 @@ class PerceptionModule:
 
                 obj = {
                     'name': name,
-                    'position': rel_pos,
+                    'position': world_pos,
                     'orientation': np.array(
                         [
                             pose.orientation.x,

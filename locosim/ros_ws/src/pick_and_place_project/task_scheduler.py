@@ -6,6 +6,57 @@ Coordinates perception, planning, and execution
 import rospy
 import numpy as np
 from enum import Enum
+import math
+from collections import defaultdict
+
+# Retry configuration
+MAX_PICK_RETRIES = 3
+MAX_PLACE_RETRIES = 2
+RETRY_OFFSET = 0.01  # meters - offset for retry attempts
+
+
+class SlotManager:
+    """Manages target positions for placing bricks by class"""
+    
+    def __init__(self, config):
+        self.config = config
+        self.target_center = np.array(config.target_table_pos)
+        self.table_size = getattr(config, 'target_table_size', [0.5, 0.35])
+        
+        # Track which slots are used per class
+        self.slots_per_class = defaultdict(int)  # class_name -> next_slot_index
+        
+        # Grid configuration
+        self.slots_per_row = 3  # 3 bricks per row
+        self.brick_spacing = 0.08  # 8cm between brick centers
+        
+    def get_slot_for_class(self, brick_class):
+        """Get next available slot for this brick class"""
+        slot_idx = self.slots_per_class[brick_class]
+        self.slots_per_class[brick_class] += 1
+        
+        # Calculate position: each class gets its own row
+        class_list = sorted(set(self.slots_per_class.keys()))
+        try:
+            row = class_list.index(brick_class)
+        except ValueError:
+            row = 0
+        
+        col = slot_idx % self.slots_per_row
+        
+        # Calculate offset from table center
+        x_offset = (col - (self.slots_per_row - 1) / 2.0) * self.brick_spacing
+        y_offset = row * self.brick_spacing
+        
+        position = self.target_center.copy()
+        position[0] += x_offset
+        position[1] += y_offset
+        
+        return position
+    
+    def reset(self):
+        """Reset all slot counters"""
+        self.slots_per_class.clear()
 
 
 class TaskState(Enum):
@@ -21,6 +72,7 @@ class TaskState(Enum):
     RETURNING_HOME = 7
     COMPLETED = 8
     ERROR = 9
+    RETRYING = 10
 
 
 class TaskScheduler:
@@ -38,6 +90,16 @@ class TaskScheduler:
         self.state = TaskState.IDLE
         self.task_sequence = []
         self.current_task_index = 0
+        
+        self.slot_manager = SlotManager(config)
+        
+        # Statistics
+        self.total_attempts = 0
+        self.successful_picks = 0
+        self.successful_places = 0
+        self.failed_picks = 0
+        self.failed_places = 0
+        self.retries_used = 0
 
     def detect_and_plan(self):
         """
@@ -74,28 +136,24 @@ class TaskScheduler:
 
         # Create task sequence: move all objects to target table
         task_sequence = []
-        target_base = self.config.target_table_pos
+        detected_positions = []
+        target_positions = []
 
         for i, obj in enumerate(objects):
             obj_class = obj.get('class', 'unknown')
 
-            # Calculate target position (spread objects across target table)
-            # Arrange in a grid pattern on target table
-            spacing = 0.08  # 8cm spacing between objects
-            row = i // 3  # 3 objects per row
-            col = i % 3
-            offset_x = (col - 1) * spacing  # Center around target
-            offset_y = (row - 1) * spacing
-
-            target_pos = np.array(
-                [
-                    target_base[0] + offset_x,
-                    target_base[1] + offset_y,
-                    target_base[2],  # Same height as target table
-                ]
-            )
+            # Use SlotManager to get target position for this brick class
+            target_pos = self.slot_manager.get_slot_for_class(obj_class)
 
             task_sequence.append({'object': obj, 'target': target_pos, 'class': obj_class})
+            
+            # Collect positions for visualization
+            detected_positions.append(obj['position'])
+            target_positions.append(target_pos)
+
+        # Visualize detected objects and target positions in RViz
+        if hasattr(self.robot_interface, 'visualize_objects_and_targets'):
+            self.robot_interface.visualize_objects_and_targets(detected_positions, target_positions)
 
         # Sort by position (process objects left to right, front to back)
         task_sequence.sort(key=lambda x: (x['object']['position'][1], x['object']['position'][0]))
@@ -137,7 +195,7 @@ class TaskScheduler:
             obj_pos = task['object']['position']
 
             rospy.loginfo(f"  Picking from position: {obj_pos}")
-            if not self.motion_planner.pick_object(obj_pos, self.robot_interface):
+            if not self._attempt_pick_with_retry(task['object']):
                 rospy.logerr(f"Failed to pick object at task {idx}")
                 self.state = TaskState.ERROR
                 return False
@@ -149,7 +207,7 @@ class TaskScheduler:
             target_pos = task['target']
 
             rospy.loginfo(f"  Placing at position: {target_pos}")
-            if not self.motion_planner.place_object(target_pos, self.robot_interface):
+            if not self._attempt_place_with_retry(target_pos):
                 rospy.logerr(f"Failed to place object at task {idx}")
                 self.state = TaskState.ERROR
                 return False
@@ -188,3 +246,64 @@ class TaskScheduler:
         self.state = TaskState.IDLE
         self.task_sequence = []
         self.current_task_index = 0
+    
+    def _attempt_pick_with_retry(self, obj_data, max_retries=MAX_PICK_RETRIES):
+        """Attempt to pick object with retries"""
+        for attempt in range(max_retries):
+            self.total_attempts += 1
+            if attempt > 0:
+                self.retries_used += 1
+                rospy.logwarn(f"Retry attempt {attempt+1}/{max_retries} for picking {obj_data['name']}")
+                
+                # Add small offset for retry
+                offset = np.array([RETRY_OFFSET * attempt, 0, 0])
+                obj_data['position'] = obj_data['position'] + offset
+            
+            success = self.motion_planner.pick_object(obj_data['position'], self.robot_interface)
+            
+            if success:
+                self.successful_picks += 1
+                rospy.loginfo(f"Successfully picked {obj_data['name']} on attempt {attempt+1}")
+                return True
+            else:
+                self.failed_picks += 1
+                rospy.logwarn(f"Pick attempt {attempt+1} failed for {obj_data['name']}")
+        
+        rospy.logerr(f"Failed to pick {obj_data['name']} after {max_retries} attempts")
+        return False
+    
+    def _attempt_place_with_retry(self, target_pos, max_retries=MAX_PLACE_RETRIES):
+        """Attempt to place object with retries"""
+        for attempt in range(max_retries):
+            self.total_attempts += 1
+            if attempt > 0:
+                self.retries_used += 1
+                rospy.logwarn(f"Retry attempt {attempt+1}/{max_retries} for placing")
+                
+                # Add small offset for retry
+                offset = np.array([0, RETRY_OFFSET * attempt, 0])
+                target_pos = target_pos + offset
+            
+            success = self.motion_planner.place_object(target_pos, self.robot_interface)
+            
+            if success:
+                self.successful_places += 1
+                rospy.loginfo(f"Successfully placed object on attempt {attempt+1}")
+                return True
+            else:
+                self.failed_places += 1
+                rospy.logwarn(f"Place attempt {attempt+1} failed")
+        
+        rospy.logerr(f"Failed to place object after {max_retries} attempts")
+        return False
+    
+    def get_stats(self):
+        """Get execution statistics"""
+        return {
+            'total_attempts': self.total_attempts,
+            'successful_picks': self.successful_picks,
+            'successful_places': self.successful_places,
+            'failed_picks': self.failed_picks,
+            'failed_places': self.failed_places,
+            'retries_used': self.retries_used
+        }

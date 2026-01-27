@@ -11,13 +11,13 @@ apt-get update && apt-get install -y ros-noetic-pinocchio
 
 # 2. Install Scikit-Learn
 echo "Installing scikit-learn..."
-pip3 install scikit-learn
+pip3 install --user scikit-learn
 
 # 3. Install Ultralytics for YOLO
 echo "Installing ultralytics..."
 # Install CPU-only PyTorch first to avoid CUDA bloat
-pip3 install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
+pip3 install --user --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
 # Then install ultralytics
-pip3 install --no-cache-dir ultralytics
+pip3 install --user --no-cache-dir ultralytics
 
 echo "All dependencies installed successfully!"

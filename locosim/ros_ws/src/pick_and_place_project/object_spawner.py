@@ -172,17 +172,43 @@ class ObjectSpawner:
 
         return np.array([qx, qy, qz, qw])
 
-    def _random_position(self):
+    def _random_position(self, min_distance=0.08, max_attempts=50):
         """
-        Generate random position within spawn area.
+        Generate random position within spawn area, ensuring minimum distance from other objects.
+
+        Args:
+            min_distance (float): Minimum distance from other spawned objects (default 8cm)
+            max_attempts (int): Maximum attempts to find valid position
 
         Returns:
             np.ndarray: [x, y, z] position on table surfaces
         """
         half_size = self.spawn_area_size / 2.0
+        
+        for attempt in range(max_attempts):
+            x = self.spawn_area_center[0] + random.uniform(-half_size[0], half_size[0])
+            y = self.spawn_area_center[1] + random.uniform(-half_size[1], half_size[1])
+            z = self.table_height + 0.1  # Slightly above table to avoid spawn collisions
+            
+            candidate = np.array([x, y, z])
+            
+            # Check distance to all existing spawned objects
+            valid = True
+            for obj in self.spawned_objects:
+                existing_pos = obj['position']
+                dist = np.sqrt((candidate[0] - existing_pos[0])**2 + (candidate[1] - existing_pos[1])**2)
+                if dist < min_distance:
+                    valid = False
+                    break
+            
+            if valid:
+                return candidate
+        
+        # If we couldn't find a valid position, return random anyway with warning
+        rospy.logwarn(f"Could not find position with {min_distance}m spacing after {max_attempts} attempts")
         x = self.spawn_area_center[0] + random.uniform(-half_size[0], half_size[0])
         y = self.spawn_area_center[1] + random.uniform(-half_size[1], half_size[1])
-        z = self.table_height + 0.1  # Slightly above table to avoid spawn collisions
+        z = self.table_height + 0.1
         return np.array([x, y, z])
 
     def spawn_object(self, brick_type=None, position=None, rotation=None, object_name=None):
