@@ -1202,17 +1202,32 @@ class MotionPlanner:
             return ((angle + np.pi) % (2 * np.pi)) - np.pi
         
         # Use NUMERICAL IK ONLY - analytical IK has frame convention mismatch
-        # Use current joints as starting config (best for small movements)
+        # The TWO-PHASE IK handles orientation separately, so we can start from current joints
         best_result = None
         best_error = float('inf')
         
-        # Only use current joints as starting config - fastest and works for incremental moves
+        # ALWAYS use current joints as starting config
+        # The two-phase IK will:
+        #   1. First converge position (works well from any start)
+        #   2. Then adjust wrist joints for orientation
+        # This is faster and more reliable than starting far away
         if current_joints is not None:
             starting_configs = [np.array(current_joints[:6])]
+            rospy.loginfo(f"IK: Using current joints as starting config")
         else:
-            starting_configs = [self.home_joints.copy()]
+            # Fallback: pick-ready config with gripper pointing down
+            pick_ready_joints = np.array([
+                np.radians(0),      # q1: base rotation
+                np.radians(-90),    # q2: shoulder 
+                np.radians(90),     # q3: elbow
+                np.radians(-90),    # q4: wrist 1
+                np.radians(90),     # q5: wrist 2 - makes gripper point down
+                np.radians(0)       # q6: wrist 3
+            ])
+            starting_configs = [pick_ready_joints]
+            rospy.loginfo(f"IK: No current joints, using pick-ready config")
         
-        rospy.loginfo(f"IK: Using current joints as starting config")
+        rospy.loginfo(f"IK: Trying {len(starting_configs)} starting configuration(s)")
         
         for i, start_config in enumerate(starting_configs):
             result = self._numerical_ik_urdf(target_base, start_config, gripper_down=gripper_down)
@@ -1247,12 +1262,14 @@ class MotionPlanner:
     def _numerical_ik_urdf(self, target_base, current_joints=None, gripper_down=True):
         """
         Numerical IK using URDF-based FK (matches Gazebo exactly).
-        Includes orientation constraint for gripper pointing down.
+        TWO-PHASE approach:
+          Phase 1: Position-only IK (fast convergence)
+          Phase 2: Adjust wrist joints for orientation (if gripper_down=True)
         
         Args:
             target_base: Target position in base_link frame [x, y, z]
             current_joints: Current joint angles (used as initial guess)
-            gripper_down: Whether gripper should point down (Z-axis of EE pointing -Z in base)
+            gripper_down: Whether gripper should point down with proper finger orientation
             
         Returns:
             Joint angles [6] or None if failed
@@ -1260,8 +1277,6 @@ class MotionPlanner:
         rospy.loginfo(f"Using numerical IK with URDF FK (gripper_down={gripper_down})")
         
         # UR5 joint limits (radians)
-        # Keep all joints in [-π, π] to avoid weird interpolation issues
-        # The UR5 can actually do ±2π on most joints, but staying in [-π, π] is safer
         joint_limits_lower = np.array([-np.pi, -np.pi, -np.pi, -np.pi, -np.pi, -np.pi])
         joint_limits_upper = np.array([np.pi, np.pi, np.pi, np.pi, np.pi, np.pi])
         
@@ -1274,174 +1289,219 @@ class MotionPlanner:
             q_clamped = np.array([wrap_to_pi(a) for a in q])
             return np.clip(q_clamped, joint_limits_lower, joint_limits_upper)
         
-        # Initial guess - Use the provided starting configuration
-        # This is critical for multi-start IK to work!
+        # Initial guess
         if current_joints is not None:
             q = np.array(current_joints[:6]).copy()
-            q = np.array([wrap_to_pi(a) for a in q])  # Wrap initial guess
+            q = np.array([wrap_to_pi(a) for a in q])
             rospy.loginfo(f"  Using PROVIDED initial guess: [{', '.join([f'{np.degrees(a):.1f}' for a in q])}]°")
         else:
             q = self.home_joints.copy()
-            rospy.loginfo(f"  Using HOME as initial guess (no start provided)")
-        
-        rospy.loginfo(f"  Initial joints (wrapped): [{', '.join([f'{np.degrees(a):.1f}' for a in q])}] deg")
+            rospy.loginfo(f"  Using HOME as initial guess")
         
         # Verify initial guess orientation
         T_init = self.urdf_fk_full(q)
         z_init = T_init[:3, 2]
+        x_init = T_init[:3, 0]
         rospy.loginfo(f"  Initial Tool Z-axis: [{z_init[0]:.3f}, {z_init[1]:.3f}, {z_init[2]:.3f}]")
+        rospy.loginfo(f"  Initial Tool X-axis: [{x_init[0]:.3f}, {x_init[1]:.3f}, {x_init[2]:.3f}]")
         
-        # Parameters - tuned for faster convergence
-        max_iter = 200  # Reduced iterations for speed
-        pos_epsilon = 1e-3  # 1mm position tolerance for convergence check
-        orient_epsilon = 0.3  # ~17 degrees orientation tolerance (relaxed)
-        lambda_dls = 0.1  # Higher damping for faster convergence
-        delta = 0.001  # For numerical Jacobian
+        # ==================== PHASE 1: POSITION-ONLY IK ====================
+        # Converge on position first, ignore orientation
+        rospy.loginfo(f"  PHASE 1: Position-only IK")
         
-        # Soft orientation constraint - gripper should point down but position is priority
-        # Weight 0.1 means position is 10x more important than orientation
-        w_orient = 0.1 if gripper_down else 0.0
+        max_iter_phase1 = 150
+        pos_epsilon = 2e-3  # 2mm position tolerance
+        lambda_dls = 0.05   # Lower damping for faster convergence
+        delta = 0.001
         
-        # Weight for staying close to initial joints (regularization)
-        # This prevents the IK from finding crazy distant solutions
-        w_joint_reg = 0.1
-        q_initial = q.copy()  # Save initial config for regularization
-        
-        for iteration in range(max_iter):
-            # Current FK (full transform)
+        for iteration in range(max_iter_phase1):
             T_current = self.urdf_fk_full(q)
             current_pos = T_current[:3, 3]
-            current_R = T_current[:3, :3]
             
-            # Position error
+            # Position error only
             pos_error = target_base - current_pos
             pos_error_norm = np.linalg.norm(pos_error)
-            
-            # Orientation error (gripper Z-axis should point down = -Z in base_link)
-            # The Z-axis of tool0 frame is the 3rd column of rotation matrix
-            tool_z_axis = current_R[:, 2]  # Current tool Z direction
-            desired_z_axis = np.array([0, 0, -1])  # Pointing down in base_link
-            
-            # Orientation error as axis-angle
-            # Cross product gives rotation axis, dot product gives angle
-            orient_error = np.cross(tool_z_axis, desired_z_axis)
-            orient_error_norm = np.linalg.norm(orient_error)
             
             if iteration == 0:
                 rospy.loginfo(f"  Initial FK pos: [{current_pos[0]:.4f}, {current_pos[1]:.4f}, {current_pos[2]:.4f}]")
                 rospy.loginfo(f"  Initial pos error: {pos_error_norm*1000:.1f} mm")
-                rospy.loginfo(f"  Tool Z-axis: [{tool_z_axis[0]:.3f}, {tool_z_axis[1]:.3f}, {tool_z_axis[2]:.3f}]")
-                if gripper_down:
-                    rospy.loginfo(f"  Initial orient error: {orient_error_norm:.3f} rad")
             
-            # Check convergence
+            # Check position convergence
             if pos_error_norm < pos_epsilon:
-                if not gripper_down or orient_error_norm < orient_epsilon:
-                    rospy.loginfo(f"  Numerical IK converged in {iteration} iterations")
-                    rospy.loginfo(f"    Position error: {pos_error_norm*1000:.2f}mm")
-                    if gripper_down:
-                        rospy.loginfo(f"    Orientation error: {np.degrees(orient_error_norm):.1f}°")
-                    return q
+                rospy.loginfo(f"  Phase 1 converged in {iteration} iterations (pos error: {pos_error_norm*1000:.1f}mm)")
+                break
             
-            # Build combined error vector
-            if gripper_down:
-                # 6D error: [pos_error, orient_error]
-                combined_error = np.concatenate([pos_error, w_orient * orient_error])
-                
-                # Numerical Jacobian (6x6)
-                J = np.zeros((6, 6))
-                for j in range(6):
-                    q_plus = q.copy()
-                    q_plus[j] += delta
-                    T_plus = self.urdf_fk_full(q_plus)
-                    pos_plus = T_plus[:3, 3]
-                    z_plus = T_plus[:3, 2]
-                    
-                    J[:3, j] = (pos_plus - current_pos) / delta
-                    J[3:, j] = w_orient * (np.cross(z_plus, desired_z_axis) - orient_error) / delta
-            else:
-                # Position only (3D error)
-                combined_error = pos_error
-                
-                # Numerical Jacobian (3x6)
-                J = np.zeros((3, 6))
-                for j in range(6):
-                    q_plus = q.copy()
-                    q_plus[j] += delta
-                    pos_plus = self.urdf_fk(q_plus)
-                    J[:, j] = (pos_plus - current_pos) / delta
+            # Numerical Jacobian (3x6) - position only
+            J = np.zeros((3, 6))
+            for j in range(6):
+                q_plus = q.copy()
+                q_plus[j] += delta
+                pos_plus = self.urdf_fk(q_plus)
+                J[:, j] = (pos_plus - current_pos) / delta
             
-            # Damped least squares with joint regularization
-            # Add penalty for moving away from initial configuration
-            # This prevents the IK from finding solutions that are far from current joints
-            joint_error = q - q_initial  # Error from initial config
-            
+            # Damped least squares
             JT = J.T
             JJT = J @ JT
-            n = JJT.shape[0]
+            dq = JT @ np.linalg.solve(JJT + lambda_dls**2 * np.eye(3), pos_error)
             
-            # Solve: dq = J^T (JJ^T + lambda^2 I)^-1 * error - w_reg * (q - q_init)
-            dq = JT @ np.linalg.solve(JJT + lambda_dls**2 * np.eye(n), combined_error)
-            dq -= w_joint_reg * joint_error  # Pull towards initial config
-            
-            # Limit step size to avoid large jumps
-            max_step = 0.15  # radians per iteration (smaller for stability)
+            # Limit step size
+            max_step = 0.2  # radians per iteration
             dq_norm = np.linalg.norm(dq)
             if dq_norm > max_step:
                 dq = dq * (max_step / dq_norm)
             
             # Update with line search
             alpha = 1.0
-            error_norm = np.linalg.norm(combined_error)
-            for _ in range(10):
-                q_new = clamp_joints(q + alpha * dq)  # Apply joint limits
-                T_new = self.urdf_fk_full(q_new)
-                pos_new = T_new[:3, 3]
-                
-                if gripper_down:
-                    z_new = T_new[:3, 2]
-                    error_new_combined = np.concatenate([
-                        target_base - pos_new,
-                        w_orient * np.cross(z_new, desired_z_axis)
-                    ])
-                else:
-                    error_new_combined = target_base - pos_new
-                    
-                error_new_norm = np.linalg.norm(error_new_combined)
-                if error_new_norm < error_norm:
+            for _ in range(8):
+                q_new = clamp_joints(q + alpha * dq)
+                pos_new = self.urdf_fk(q_new)
+                error_new = np.linalg.norm(target_base - pos_new)
+                if error_new < pos_error_norm:
                     q = q_new
                     break
                 alpha *= 0.5
             else:
-                q = clamp_joints(q + 0.1 * dq)  # Small step with limits
+                q = clamp_joints(q + 0.1 * dq)
         
-        # Final clamp and wrap
+        # Check Phase 1 result
+        T_phase1 = self.urdf_fk_full(q)
+        pos_phase1 = T_phase1[:3, 3]
+        pos_error_phase1 = np.linalg.norm(target_base - pos_phase1)
+        z_phase1 = T_phase1[:3, 2]
+        
+        rospy.loginfo(f"  Phase 1 result: pos error={pos_error_phase1*1000:.1f}mm, Z=[{z_phase1[0]:.2f}, {z_phase1[1]:.2f}, {z_phase1[2]:.2f}]")
+        
+        if pos_error_phase1 > 0.05:  # 50mm - Phase 1 failed
+            rospy.logerr(f"  Phase 1 FAILED: position error {pos_error_phase1*1000:.1f}mm > 50mm")
+            return None
+        
+        # ==================== PHASE 2: ORIENTATION ADJUSTMENT ====================
+        # If gripper_down, adjust wrist joints (q4, q5, q6) to get gripper pointing down
+        # Keep q1, q2, q3 fixed to maintain position
+        
+        if not gripper_down:
+            # No orientation constraint needed
+            rospy.loginfo(f"  Skipping Phase 2 (gripper_down=False)")
+            return clamp_joints(q)
+        
+        # Check if orientation is already acceptable after Phase 1
+        T_check = self.urdf_fk_full(q)
+        z_after_phase1 = T_check[:3, 2]
+        
+        # If Z is already pointing mostly down (Z_z < -0.9), skip Phase 2
+        # Phase 1 often gives Z_z ≈ -0.97 which is excellent for picking
+        if z_after_phase1[2] < -0.9:
+            rospy.loginfo(f"  Skipping Phase 2: Z-axis already good Z=[{z_after_phase1[0]:.3f}, {z_after_phase1[1]:.3f}, {z_after_phase1[2]:.3f}]")
+            q = clamp_joints(q)
+            T_final = self.urdf_fk_full(q)
+            final_pos = T_final[:3, 3]
+            final_z = T_final[:3, 2]
+            final_x = T_final[:3, 0]
+            final_pos_error = np.linalg.norm(target_base - final_pos)
+            
+            rospy.loginfo(f"  Final joints (deg): [{', '.join([f'{np.degrees(a):.1f}' for a in q])}]")
+            rospy.loginfo(f"  Final tool Z-axis: [{final_z[0]:.3f}, {final_z[1]:.3f}, {final_z[2]:.3f}]")
+            rospy.loginfo(f"  Final pos error: {final_pos_error*1000:.1f}mm")
+            
+            if final_pos_error < 0.03 and final_z[2] < -0.7:
+                rospy.loginfo(f"  ✓ IK SUCCESS (Phase 1 only)")
+                return q
+            else:
+                rospy.logerr(f"  ✗ IK FAILED: pos={final_pos_error*1000:.1f}mm error")
+                return None
+        
+        rospy.loginfo(f"  PHASE 2: Orientation adjustment (wrist joints only)")
+        
+        # Desired: Z-axis pointing down
+        desired_z = np.array([0, 0, -1])
+        
+        max_iter_phase2 = 100
+        orient_epsilon = 0.15  # ~8.6 degrees
+        
+        # Only optimize wrist joints (q4, q5, q6) to maintain position
+        q_arm = q[:3].copy()  # Fixed arm joints
+        
+        for iteration in range(max_iter_phase2):
+            T_current = self.urdf_fk_full(q)
+            current_pos = T_current[:3, 3]
+            current_R = T_current[:3, :3]
+            tool_z = current_R[:, 2]
+            
+            # Orientation error (Z-axis alignment)
+            orient_error = np.cross(tool_z, desired_z)
+            orient_error_norm = np.linalg.norm(orient_error)
+            
+            # Also check position hasn't drifted
+            pos_drift = np.linalg.norm(target_base - current_pos)
+            
+            if iteration == 0:
+                rospy.loginfo(f"  Phase 2 start: Z=[{tool_z[0]:.3f}, {tool_z[1]:.3f}, {tool_z[2]:.3f}], orient_err={np.degrees(orient_error_norm):.1f}°")
+            
+            # Check orientation convergence
+            if orient_error_norm < orient_epsilon:
+                rospy.loginfo(f"  Phase 2 converged in {iteration} iterations (orient error: {np.degrees(orient_error_norm):.1f}°)")
+                break
+            
+            # Numerical Jacobian for orientation (3x3 for wrist joints only)
+            # Combined with position to prevent drift
+            J = np.zeros((6, 3))  # [pos_error(3), orient_error(3)] x [q4, q5, q6]
+            for j in range(3):
+                q_plus = q.copy()
+                q_plus[3+j] += delta  # Only modify wrist joints
+                T_plus = self.urdf_fk_full(q_plus)
+                pos_plus = T_plus[:3, 3]
+                z_plus = T_plus[:3, 2]
+                
+                J[:3, j] = (pos_plus - current_pos) / delta  # Position part
+                J[3:, j] = (np.cross(z_plus, desired_z) - orient_error) / delta  # Orientation part
+            
+            # Combined error: prioritize position, then orientation
+            w_pos = 1.0
+            w_orient = 0.3
+            combined_error = np.concatenate([w_pos * (target_base - current_pos), w_orient * orient_error])
+            
+            # Damped least squares
+            JT = J.T
+            JJT = J @ JT
+            dq_wrist = JT @ np.linalg.solve(JJT + 0.1**2 * np.eye(6), combined_error)
+            
+            # Limit step size
+            max_step = 0.1
+            dq_norm = np.linalg.norm(dq_wrist)
+            if dq_norm > max_step:
+                dq_wrist = dq_wrist * (max_step / dq_norm)
+            
+            # Update only wrist joints (wrap and clamp inline)
+            for j in range(3):
+                new_val = q[3+j] + dq_wrist[j]
+                new_val = wrap_to_pi(new_val)
+                new_val = np.clip(new_val, -np.pi, np.pi)
+                q[3+j] = new_val
+        
+        # Final result
         q = clamp_joints(q)
-        
-        # Check final error
         T_final = self.urdf_fk_full(q)
         final_pos = T_final[:3, 3]
-        final_pos_error = np.linalg.norm(target_base - final_pos)
         final_z = T_final[:3, 2]
-        final_orient_error = np.linalg.norm(np.cross(final_z, desired_z_axis)) if gripper_down else 0
+        final_x = T_final[:3, 0]
+        final_pos_error = np.linalg.norm(target_base - final_pos)
         
         rospy.loginfo(f"  Final joints (deg): [{', '.join([f'{np.degrees(a):.1f}' for a in q])}]")
-        rospy.loginfo(f"  Final tool Z-axis: [{final_z[0]:.3f}, {final_z[1]:.3f}, {final_z[2]:.3f}]")
+        rospy.loginfo(f"  Final tool Z-axis: [{final_z[0]:.3f}, {final_z[1]:.3f}, {final_z[2]:.3f}] (want [0, 0, -1])")
+        rospy.loginfo(f"  Final tool X-axis: [{final_x[0]:.3f}, {final_x[1]:.3f}, {final_x[2]:.3f}]")
         
-        # Accept solution if position is close enough
-        # Relax tolerance to 30mm for position
-        pos_ok = final_pos_error < 0.03  # 30mm tolerance
-        # Relax orientation to Z < -0.7 (about 45 degrees from vertical)
-        orient_ok = (not gripper_down) or (final_z[2] < -0.7)
+        # Accept if position is good and Z is mostly pointing down
+        pos_ok = final_pos_error < 0.03  # 30mm
+        z_pointing_down = final_z[2] < -0.7  # Z component < -0.7 means mostly down
         
         if pos_ok:
-            if orient_ok:
-                rospy.loginfo(f"  ✓ Numerical IK SUCCESS: pos={final_pos_error*1000:.1f}mm, Z={final_z[2]:.2f}")
+            if z_pointing_down:
+                rospy.loginfo(f"  ✓ IK SUCCESS: pos={final_pos_error*1000:.1f}mm, Z_down={final_z[2]:.2f}")
             else:
-                rospy.logwarn(f"  ⚠ Numerical IK: pos={final_pos_error*1000:.1f}mm OK, but orientation Z={final_z[2]:.2f} (not pointing down)")
+                rospy.logwarn(f"  ⚠ IK: pos={final_pos_error*1000:.1f}mm OK, but Z={final_z[2]:.2f} not fully down")
             return q
         else:
-            rospy.logerr(f"  ✗ Numerical IK failed: pos={final_pos_error*1000:.1f}mm error")
+            rospy.logerr(f"  ✗ IK FAILED: pos={final_pos_error*1000:.1f}mm error")
             return None
     
     def _analytical_ik(self, target_pos, gripper_down=True, current_joints=None):
