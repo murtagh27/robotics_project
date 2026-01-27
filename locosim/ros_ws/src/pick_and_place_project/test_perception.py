@@ -1,274 +1,202 @@
 #!/usr/bin/env python3
 """
 @file test_perception.py
-@brief Test script for validating the perception module's detection accuracy.
-@details This script compares detected objects from the perception module against ground truth
-         from Gazebo simulation. It evaluates position accuracy (XY, Z), orientation accuracy,
-         and classification accuracy. The script handles object matching using planar distance
-         and accounts for object symmetry when calculating orientation errors.
+@brief Perception testing and visualization tool.
+@details Subscribes to camera feed and visualizes detected bricks with oriented bounding boxes
+         and orientation arrows. Used for testing and verifying YOLO OBB model performance.
 @author Benjamin Krech
 @date January 2026
 """
 
 import rospy
+import cv2
 import numpy as np
 import math
-import time
-
-# Try importing scipy, handle graceful failure if not installed
-try:
-    from scipy.optimize import linear_sum_assignment
-
-    HAS_SCIPY = True
-except ImportError:
-    HAS_SCIPY = False
-    print("[WARN] Scipy not found. Using simple greedy matching.")
-
-# Try importing TF transformations for accurate quaternion handling
-try:
-    from tf.transformations import euler_from_quaternion
-
-    HAS_TF = True
-except ImportError:
-    HAS_TF = False
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
+from ultralytics import YOLO
+from brick_classes import BRICK_CLASSES
 
 
-def get_yaw(orientation_q):
+class OrientationVisualizer:
     """
-    @brief Extracts yaw angle from a quaternion orientation.
-    @details Converts a quaternion representation to yaw angle in degrees. Uses TF transformations
-             library if available, otherwise falls back to manual calculation. The quaternion is
-             normalized before conversion to ensure numerical stability.
-    @param orientation_q Quaternion orientation as [x, y, z, w] (array or list).
-    @return Yaw angle in degrees.
+    @class OrientationVisualizer
+    @brief Visualizes brick detections with oriented bounding boxes and arrows.
     """
-    # Normalize quaternion to be safe
-    q = np.array(orientation_q)
-    norm = np.linalg.norm(q)
-    if norm > 0:
-        q = q / norm
 
-    if HAS_TF:
-        # ROS standard [x, y, z, w]
-        (_, _, yaw) = euler_from_quaternion(q)
-        return math.degrees(yaw)
-    else:
-        # Manual fallback
-        # Assumes q = [x, y, z, w]
-        siny_cosp = 2 * (q[3] * q[2] + q[0] * q[1])
-        cosy_cosp = 1 - 2 * (q[1] * q[1] + q[2] * q[2])
-        return math.degrees(math.atan2(siny_cosp, cosy_cosp))
+    def __init__(self):
+        """
+        @brief Initializes the visualizer with YOLO model and ROS subscribers.
+        """
+        rospy.init_node('orientation_visualizer', anonymous=True)
+        self.bridge = CvBridge()
 
+        model_path = '/home/ubuntu/ros_ws/src/pick_and_place_project/weights/best.pt'
+        self.model = YOLO(model_path)
+        rospy.loginfo(f"Loaded OBB model from {model_path}")
 
-def calculate_symmetry_error(gt_angle, det_angle, shape_class):
-    """
-    @brief Calculates angular error while accounting for object symmetry.
-    @details Different objects have different rotational symmetries. Cubes have 90-degree symmetry
-             (4-fold), while rectangles have 180-degree symmetry (2-fold). This function maps
-             the angular difference to the smallest equivalent error considering the object's
-             symmetry properties.
-    @param gt_angle Ground truth angle in degrees.
-    @param det_angle Detected angle in degrees.
-    @param shape_class Object class name (e.g., 'cube', 'rectangle') used to determine symmetry.
-    @return Symmetry-adjusted angular error in degrees (smallest equivalent difference).
-    """
-    diff = abs(gt_angle - det_angle) % 360
-    if diff > 180:
-        diff = 360 - diff
+        self.latest_rgb = None
+        rospy.Subscriber('/camera/rgb/image_raw', Image, self.rgb_callback)
+        rospy.loginfo("Orientation Visualizer started. Press 'q' to quit.")
 
-    # Lowercase check for safety
-    shape_class = shape_class.lower()
+    def rgb_callback(self, msg):
+        """
+        @brief ROS callback for RGB camera images.
+        @param msg ROS Image message.
+        """
+        try:
+            self.latest_rgb = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        except Exception as e:
+            rospy.logerr(f"RGB Error: {e}")
 
-    # CUBE: 90 degree symmetry
-    if "cube" in shape_class:
-        # Map error to 0-45 range
-        # ex: 89 deg error -> 1 deg error
-        while diff > 45:
-            diff = abs(diff - 90)
+    def draw_obb_box(self, image, corners, color=(0, 255, 0), thickness=2):
+        """
+        @brief Draws oriented bounding box on image.
+        @param image Target image to draw on.
+        @param corners Array of 4 corner points.
+        @param color Box color in BGR format.
+        @param thickness Line thickness.
+        """
+        corners = corners.astype(np.int32)
+        cv2.polylines(image, [corners], isClosed=True, color=color, thickness=thickness)
 
-    # RECTANGLE: 180 degree symmetry
-    # ex: 179 deg error -> 1 deg error (flipped is fine)
-    # ex: 90 deg error -> 90 deg error (sideways is BAD)
-    else:
-        if diff > 90:
-            diff = abs(diff - 180)
+    def draw_orientation_arrow(self, image, cx, cy, angle, length=50, color=(0, 255, 0)):
+        """
+        @brief Draws orientation arrow showing brick angle.
+        @param image Target image to draw on.
+        @param cx Center x coordinate.
+        @param cy Center y coordinate.
+        @param angle Orientation angle in radians.
+        @param length Arrow length in pixels.
+        @param color Arrow color in BGR format.
+        """
+        end_x = int(cx + length * math.cos(angle))
+        end_y = int(cy + length * math.sin(angle))
+        cv2.arrowedLine(image, (cx, cy), (end_x, end_y), color, 3, tipLength=0.3)
+        cv2.circle(image, (cx, cy), 5, (0, 0, 255), -1)
 
-    return diff
+    def run(self):
+        """
+        @brief Main loop processing camera feed and displaying detections.
+        @details Runs at 5Hz, displays live feed with OBB boxes, orientation arrows,
+                 and class labels. Press 'q' to quit.
+        """
+        rate = rospy.Rate(5)
+        cv2.namedWindow('Brick Orientations', cv2.WINDOW_NORMAL)
 
+        while not rospy.is_shutdown():
+            if self.latest_rgb is not None:
+                vis_image = self.latest_rgb.copy()
 
-def run_test():
-    """
-    @brief Main test function that validates perception module accuracy.
-    @details Executes the complete test pipeline:
-             1. Initializes ROS node and perception module
-             2. Retrieves ground truth object poses from Gazebo
-             3. Obtains detected objects from the perception module
-             4. Matches detected objects to ground truth using planar (XY) distance
-             5. Calculates position errors (XY, Z), orientation errors, and classification accuracy
-             6. Displays results in a formatted table with statistics
-             7. Computes systematic biases and accuracy metrics
+                # Run detection
+                results = self.model(vis_image, verbose=False)
 
-             The matching algorithm uses planar distance only to be robust against Z-height errors.
-             Results include mean errors, standard deviations, and systematic bias detection.
-    @return None
-    """
-    # Force stdout to flush immediately
-    print("========================================", flush=True)
-    print("   STARTING PERCEPTION TESTER...        ", flush=True)
-    print("========================================", flush=True)
+                num_detections = 0
+                if len(results) > 0 and results[0].obb is not None:
+                    obb_data = results[0].obb
+                    num_detections = len(obb_data.xywhr)
 
-    print("[INFO] Importing Perception Module (this may take a moment)...", flush=True)
+                    # Get class names
+                    class_names = results[0].names
 
-    # MOVE the import here. Now we see the prints above first!
-    from perception_module import PerceptionModule
+                    for idx in range(num_detections):
+                        cx, cy, w, h, angle_rad = obb_data.xywhr[idx].cpu().numpy()
+                        confidence = obb_data.conf[idx].cpu().numpy()
+                        class_id = int(obb_data.cls[idx].cpu().numpy())
+                        class_name = class_names[class_id]
 
-    print("[INFO] Initializing Node...", flush=True)
-    rospy.init_node('perception_tester', anonymous=True)
+                        # Get the 4 corner points
+                        if hasattr(obb_data, 'xyxyxyxy'):
+                            corners = obb_data.xyxyxyxy[idx].cpu().numpy().reshape(4, 2)
+                        else:
+                            # Calculate corners manually from center, size, and angle
+                            cos_a = math.cos(angle_rad)
+                            sin_a = math.sin(angle_rad)
+                            w_half = w / 2
+                            h_half = h / 2
 
-    print("[INFO] Loading AI Models...", flush=True)
-    perception = PerceptionModule(config=None)
+                            corners = np.array(
+                                [
+                                    [-w_half, -h_half],
+                                    [w_half, -h_half],
+                                    [w_half, h_half],
+                                    [-w_half, h_half],
+                                ]
+                            )
 
-    rospy.init_node('perception_tester', anonymous=True)
+                            # Rotate
+                            rot_matrix = np.array([[cos_a, -sin_a], [sin_a, cos_a]])
+                            corners = corners @ rot_matrix.T
 
-    # 1. Initialize Perception
-    perception = PerceptionModule(config=None)
-    time.sleep(1.0)  # Allow connections to stabilize
+                            # Translate
+                            corners[:, 0] += cx
+                            corners[:, 1] += cy
 
-    # 2. Get Ground Truth from Gazebo
-    try:
-        from gazebo_msgs.msg import ModelStates
+                        self.draw_obb_box(vis_image, corners, color=(0, 255, 0), thickness=2)
+                        self.draw_orientation_arrow(
+                            vis_image, int(cx), int(cy), angle_rad, length=50, color=(0, 255, 0)
+                        )
 
-        print("[INFO] Waiting for Gazebo states...")
-        msg = rospy.wait_for_message('/gazebo/model_states', ModelStates, timeout=5.0)
-        perception.update_ground_truth(msg)
-    except Exception as e:
-        print(f"[ERROR] Could not get Ground Truth: {e}")
-        return
+                        brick_info = list(BRICK_CLASSES.values())[class_id]
+                        trivial_name = brick_info['class']
+                        label = f"{trivial_name}: {confidence:.2f}"
+                        text_pos = (int(cx) - 50, int(cy) - 25)
 
-    # 3. Get Detections
-    detections = perception.get_detected_objects()
-    ground_truth = perception.get_ground_truth_objects()
+                        cv2.putText(
+                            vis_image,
+                            label,
+                            text_pos,
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5,
+                            (0, 0, 0),
+                            3,
+                            cv2.LINE_AA,
+                        )
+                        cv2.putText(
+                            vis_image,
+                            label,
+                            text_pos,
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5,
+                            (139, 0, 0),
+                            1,
+                            cv2.LINE_AA,
+                        )
 
-    n_det = len(detections)
-    n_gt = len(ground_truth)
-    print(f"\n[STATUS] Detected: {n_det} | Ground Truth: {n_gt}")
+                cv2.putText(
+                    vis_image,
+                    f"Detected: {num_detections} bricks",
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1,
+                    (0, 255, 0),
+                    2,
+                    cv2.LINE_AA,
+                )
+                cv2.putText(
+                    vis_image,
+                    "Green arrows show detected orientation",
+                    (10, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (255, 255, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
 
-    if n_det == 0:
-        print("[WARN] No objects detected. Check camera connection.")
-        return
+                cv2.imshow('Brick Orientations', vis_image)
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q'):
+                    break
 
-    # --- MATCHING LOGIC (PLANAR PRIORITY) ---
-    # We use only X and Y for matching to be robust against Z-height errors
-    cost_matrix = np.zeros((n_gt, n_det))
+            rate.sleep()
 
-    for r, gt in enumerate(ground_truth):
-        for c, det in enumerate(detections):
-            # PLANAR DISTANCE only (ignore Z for matching purposes)
-            dx = gt['position'][0] - det['position'][0]
-            dy = gt['position'][1] - det['position'][1]
-            dist_xy = math.sqrt(dx * dx + dy * dy)
-            cost_matrix[r, c] = dist_xy
-
-    # Assignment
-    if HAS_SCIPY:
-        row_ind, col_ind = linear_sum_assignment(cost_matrix)
-    else:
-        # Simple greedy fallback if scipy missing
-        row_ind = list(range(n_gt))
-        col_ind = np.argmin(cost_matrix, axis=1)
-
-    # --- RESULTS TABLE ---
-    print("\n" + "-" * 120)
-    print(
-        f"{'GT NAME':<28} | {'MATCHED':<22} | {'XY-ERR':<9} | {'Z-ERR':<9} | {'YAW-ERR':<9} | {'CONF':<5} | {'CLASS OK?'}"
-    )
-    print("-" * 120)
-
-    stats = {
-        'count': 0,
-        'xy_err': [],
-        'z_err': [],
-        'yaw_err': [],
-        'correct_class': 0,
-        'bias_x': [],
-        'bias_y': [],
-        'bias_z': [],
-    }
-
-    matched_det_indices = set()
-
-    for i in range(len(row_ind)):
-        gt_idx = row_ind[i]
-        det_idx = col_ind[i]
-
-        # Guard against index out of bounds if sizes differ
-        if gt_idx >= n_gt or det_idx >= n_det:
-            continue
-
-        gt = ground_truth[gt_idx]
-        det = detections[det_idx]
-
-        # Calculate full 3D distance for validation
-        pos_err_vec = det['position'] - gt['position']  # [dx, dy, dz]
-        dist_3d = np.linalg.norm(pos_err_vec)
-
-        # PLANAR match distance
-        dist_xy = cost_matrix[gt_idx, det_idx]
-
-        # Thresholds: Match is valid if XY < 15cm (generous to allow for calibration errors)
-        if dist_xy < 0.15:
-            matched_det_indices.add(det_idx)
-            stats['count'] += 1
-
-            # Errors
-            xy_mm = dist_xy * 1000
-            z_mm = pos_err_vec[2] * 1000  # Signed Z error to check bias
-
-            # Yaw
-            gt_yaw = get_yaw(gt['orientation'])
-            det_yaw = get_yaw(det['orientation'])
-            yaw_diff = calculate_symmetry_error(gt_yaw, det_yaw, gt['class'])
-
-            # Class Check
-            class_match = gt['class'] == det['class']
-            class_str = "YES" if class_match else f"NO ({det['class']})"
-
-            # Update Stats
-            stats['xy_err'].append(xy_mm)
-            stats['z_err'].append(abs(z_mm))
-            stats['yaw_err'].append(yaw_diff)
-            stats['bias_x'].append(pos_err_vec[0])
-            stats['bias_y'].append(pos_err_vec[1])
-            stats['bias_z'].append(pos_err_vec[2])
-            if class_match:
-                stats['correct_class'] += 1
-
-            print(
-                f"{gt['name']:<28} | {det['name']:<22} | {xy_mm:5.1f}mm   | {z_mm:+6.1f}mm  | {yaw_diff:5.1f}°   | {det['conf']:.2f}  | {class_str}"
-            )
-        else:
-            print(
-                f"{gt['name']:<28} | {'--- NO MATCH ---':<22} | -        | -        | -        | -     | -"
-            )
-
-    # Print Ghosts
-    for i in range(n_det):
-        if i not in matched_det_indices:
-            print(
-                f"{'??? (GHOST)':<28} | {detections[i]['name']:<22} | -        | -        | -        | {detections[i]['conf']:.2f}  | -"
-            )
-
-    print("-" * 120)
-
-    # --- SUMMARY & DIAGNOSTICS ---
-    if stats['count'] > 0:
-        avg_xy = np.mean(stats['xy_err'])
-        avg_z_abs = np.mean(stats['z_err'])
-        avg_yaw = np.mean(stats['yaw_err'])
-        accuracy = (stats['correct_class'] / stats['count']) * 100
-
-        # BIAS CALCULATION (The Magic Numbers
+        cv2.destroyAllWindows()
 
 
 if __name__ == '__main__':
-    run_test()
+    try:
+        visualizer = OrientationVisualizer()
+        visualizer.run()
+    except rospy.ROSInterruptException:
+        pass
