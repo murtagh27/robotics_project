@@ -299,8 +299,7 @@ class PapaController(BaseControllerFixed):
 
         Args:
             num_objects (int, optional): Number of objects to spawn. Uses config default if None.
-            brick_types (list, optional): List of specific brick types to spawn. Uses config default if None.
-                                          If provided, spawns one of each type from this list.
+            brick_types (list, optional): List of allowed brick types. Uses config default if None.
         
         Returns:
             list: List of spawned object info dicts
@@ -309,26 +308,20 @@ class PapaController(BaseControllerFixed):
         rospy.loginfo("SPAWNING OBJECTS")
         rospy.loginfo("=" * 60)
 
-        # Get brick types to spawn
+        # Get brick types to spawn from
         if brick_types is None:
             brick_types = self.config.allowed_brick_types
         
         # Get number of objects to spawn
         if num_objects is None:
-            num_objects = getattr(self.config, 'num_objects_to_spawn', 3)
+            num_objects = getattr(self.config, 'num_objects_to_spawn', 5)
 
-        if brick_types is not None and len(brick_types) > 0:
-            # Spawn one of each specified type
-            rospy.loginfo(f"Spawning one of each specified type: {brick_types}")
-            spawned_objects = self.object_spawner.spawn_one_of_each(
-                allowed_types=brick_types,
-            )
-        else:
-            # Spawn random objects
-            rospy.loginfo(f"Spawning {num_objects} random objects")
-            spawned_objects = self.object_spawner.spawn_random_objects(
-                num_objects=num_objects,
-            )
+        # Spawn random objects (randomly chosen from allowed types)
+        rospy.loginfo(f"Spawning {num_objects} objects from types: {brick_types}")
+        spawned_objects = self.object_spawner.spawn_random_objects(
+            num_objects=num_objects,
+            allowed_types=brick_types,
+        )
 
         rospy.loginfo(f"Successfully spawned {len(spawned_objects)} objects")
         for obj in spawned_objects:
@@ -560,10 +553,10 @@ class PapaController(BaseControllerFixed):
             rospy.set_param(f"{param_base}/d", d_gain)
             rospy.loginfo(f"  {joint}: P={p_gain}, I={i_gain}, D={d_gain} (heavy)")
         
-        # Set moderate gains for wrist joints
-        wrist_p = p_gain * 0.5  # Lighter joints need less gain
-        wrist_d = d_gain * 0.5
-        wrist_i = i_gain * 0.5
+        # Set moderate gains for wrist joints (lower P, higher D to prevent oscillation)
+        wrist_p = p_gain * 0.3  # Lower P for lighter joints
+        wrist_d = d_gain * 2.0  # Higher D for damping (prevents spinning)
+        wrist_i = 0.1           # Small I to avoid windup
         for joint in light_joints:
             param_base = f"/ur5/ros_impedance_controller/gains/{joint}"
             rospy.set_param(f"{param_base}/p", wrist_p)
@@ -574,10 +567,13 @@ class PapaController(BaseControllerFixed):
         # Set lower gains for gripper (more compliant)
         for joint in gripper_joints:
             param_base = f"/ur5/ros_impedance_controller/gains/{joint}"
-            rospy.set_param(f"{param_base}/p", 50.0)  # Much lower for compliant gripper
-            rospy.set_param(f"{param_base}/i", 0.01)
-            rospy.set_param(f"{param_base}/d", 5.0)
-            rospy.loginfo(f"  {joint}: P=50.0, I=0.01, D=5.0 (compliant)")
+        # Set higher gains for gripper (needs force to grip objects)
+        for joint in gripper_joints:
+            param_base = f"/ur5/ros_impedance_controller/gains/{joint}"
+            rospy.set_param(f"{param_base}/p", 200.0)  # Higher P for grip force
+            rospy.set_param(f"{param_base}/i", 1.0)    # Some I for steady grip
+            rospy.set_param(f"{param_base}/d", 20.0)   # Damping
+            rospy.loginfo(f"  {joint}: P=200.0, I=1.0, D=20.0 (gripper)")
         
         rospy.loginfo("\n✓ Impedance controller gains updated")
         rospy.loginfo("  Higher P gain = stiffer, better tracking")
@@ -828,11 +824,15 @@ class PapaController(BaseControllerFixed):
         rospy.loginfo(f"GRIPPER COMMAND: {position:.2f} rad ({'OPEN' if position > 0 else 'CLOSED'})")
         rospy.loginfo(f"{'='*50}")
         
+        # Get current gripper state
+        current_gripper = self.q[6:8] if len(self.q) >= 8 else [0, 0]
+        rospy.loginfo(f"Current gripper joints: [{current_gripper[0]:.3f}, {current_gripper[1]:.3f}] rad")
+        
         # Update gripper position tracking
         old_gripper_pos = self.gripper_pos
         self.gripper_pos = position  # Joint angle (not width)
         
-        rospy.loginfo(f"Gripper position: {old_gripper_pos:.4f} -> {self.gripper_pos:.4f} rad")
+        rospy.loginfo(f"Gripper command: {old_gripper_pos:.4f} -> {self.gripper_pos:.4f} rad")
         
         # Update q_des with new gripper position (keep arm position same)
         self.q_des[6] = self.gripper_pos
@@ -841,10 +841,15 @@ class PapaController(BaseControllerFixed):
         # Send command via main /command topic (not separate gripper topic!)
         # This is controlled by ros_impedance_controller along with arm
         rospy.loginfo(f"Sending gripper command via /command topic...")
+        rospy.loginfo(f"Full q_des: {np.array2string(self.q_des, precision=3)}")
         self.send_des_jstate(self.q_des, np.zeros(8), np.zeros(8))
         
         # Wait for gripper to move
-        rospy.sleep(1.0)
+        rospy.sleep(1.5)
+        
+        # Check final gripper state
+        final_gripper = self.q[6:8] if len(self.q) >= 8 else [0, 0]
+        rospy.loginfo(f"Final gripper joints: [{final_gripper[0]:.3f}, {final_gripper[1]:.3f}] rad")
         rospy.loginfo(f"Gripper command complete\n{'='*50}\n")
 
     def get_current_joint_state(self):

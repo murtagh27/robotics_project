@@ -215,6 +215,12 @@ class TaskScheduler:
             self.state = TaskState.PLACING
 
             rospy.loginfo(f"Task {idx+1} completed successfully")
+            
+            # Return to safe height before next pick to avoid collisions
+            # This prevents the robot from moving horizontally at low height and hitting objects
+            if idx < len(self.task_sequence) - 1:
+                rospy.loginfo("  Returning to safe height before next pick...")
+                self.motion_planner.move_to_joints(self.config.home_joint_config, self.robot_interface)
 
         # Return to home
         self.state = TaskState.RETURNING_HOME

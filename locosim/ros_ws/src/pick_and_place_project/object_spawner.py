@@ -172,12 +172,12 @@ class ObjectSpawner:
 
         return np.array([qx, qy, qz, qw])
 
-    def _random_position(self, min_distance=0.08, max_attempts=50):
+    def _random_position(self, min_distance=0.12, max_attempts=100):
         """
         Generate random position within spawn area, ensuring minimum distance from other objects.
 
         Args:
-            min_distance (float): Minimum distance from other spawned objects (default 8cm)
+            min_distance (float): Minimum distance from other spawned objects (default 12cm)
             max_attempts (int): Maximum attempts to find valid position
 
         Returns:
