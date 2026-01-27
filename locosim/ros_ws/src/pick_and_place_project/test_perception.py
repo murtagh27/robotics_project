@@ -72,7 +72,7 @@ class OrientationVisualizer:
         """
         end_x = int(cx + length * math.cos(angle))
         end_y = int(cy + length * math.sin(angle))
-        cv2.arrowedLine(image, (cx, cy), (end_x, end_y), color, 3, tipLength=0.3)
+        cv2.arrowedLine(image, (cx, cy), (end_x, end_y), color, 2, tipLength=0.3)
         cv2.circle(image, (cx, cy), 5, (0, 0, 255), -1)
 
     def run(self):
@@ -107,14 +107,16 @@ class OrientationVisualizer:
 
                         # Get the 4 corner points
                         if hasattr(obb_data, 'xyxyxyxy'):
+                            # Use pre-computed corners if available
                             corners = obb_data.xyxyxyxy[idx].cpu().numpy().reshape(4, 2)
                         else:
-                            # Calculate corners manually from center, size, and angle
+                            # Calculate corners from center, dimensions, and rotation
                             cos_a = math.cos(angle_rad)
                             sin_a = math.sin(angle_rad)
                             w_half = w / 2
                             h_half = h / 2
 
+                            # Define rectangle corners relative to center
                             corners = np.array(
                                 [
                                     [-w_half, -h_half],
@@ -132,7 +134,10 @@ class OrientationVisualizer:
                             corners[:, 0] += cx
                             corners[:, 1] += cy
 
-                        self.draw_obb_box(vis_image, corners, color=(0, 255, 0), thickness=2)
+                        # Draw green bounding box
+                        self.draw_obb_box(vis_image, corners, color=(0, 255, 0), thickness=1)
+
+                        # Draw green arrow showing orientation
                         self.draw_orientation_arrow(
                             vis_image, int(cx), int(cy), angle_rad, length=50, color=(0, 255, 0)
                         )
@@ -142,45 +147,39 @@ class OrientationVisualizer:
                         label = f"{trivial_name}: {confidence:.2f}"
                         text_pos = (int(cx) - 50, int(cy) - 25)
 
+                        # Draw label in dark blue
                         cv2.putText(
                             vis_image,
                             label,
                             text_pos,
                             cv2.FONT_HERSHEY_SIMPLEX,
-                            0.5,
-                            (0, 0, 0),
-                            3,
-                            cv2.LINE_AA,
-                        )
-                        cv2.putText(
-                            vis_image,
-                            label,
-                            text_pos,
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.5,
+                            0.4,
                             (139, 0, 0),
                             1,
                             cv2.LINE_AA,
                         )
 
+                # Display detection count
                 cv2.putText(
                     vis_image,
                     f"Detected: {num_detections} bricks",
                     (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (139, 0, 0),
                     1,
-                    (0, 255, 0),
-                    2,
                     cv2.LINE_AA,
                 )
+
+                # Display instructions
                 cv2.putText(
                     vis_image,
                     "Green arrows show detected orientation",
                     (10, 60),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (255, 255, 255),
-                    2,
+                    0.5,
+                    (139, 0, 0),
+                    1,
                     cv2.LINE_AA,
                 )
 
