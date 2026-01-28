@@ -10,6 +10,8 @@ locosim/ros_ws/src/locosim
 **__pycache__
 locosim/ros_ws/src/pick_and_place_project/training_data/*
 !locosim/ros_ws/src/pick_and_place_project/training_data/dataset_obb.yaml
+!locosim/ros_ws/src/pick_and_place_project/training_data/yolo_training.ipynb
+
 
 # Runtime and cache directories
 locosim/.bash_history

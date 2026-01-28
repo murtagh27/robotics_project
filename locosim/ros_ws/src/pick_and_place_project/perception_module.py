@@ -3,8 +3,8 @@
 @file perception_module.py
 @brief Perception module for object detection and localization.
 @details This module handles computer vision tasks for detecting and localizing objects.
-         It uses YOLO combined with an RGB-D camera. Camera images are processed to detect
-         all objects and calculate their position and rotation.
+         It uses YOLOv8-OBB (Oriented Bounding Box) combined with an RGB-D camera. Camera
+         images are processed to detect all objects and calculate their position and rotation.
 @author Benjamin Krech
 @date January 2026
 """
@@ -170,20 +170,14 @@ class PerceptionModule:
             xywhr = result.obb.xywhr[idx].cpu().numpy()
             x_center, y_center, width, height, rotation_rad = xywhr
 
-            # Convert center coords to corner coords for depth lookup
-            x1 = int(x_center - width / 2)
-            y1 = int(y_center - height / 2)
-            x2 = int(x_center + width / 2)
-            y2 = int(y_center + height / 2)
-
             conf = float(result.obb.conf[idx])
             cls_id = int(result.obb.cls[idx])
 
             # Get name from YOLO id or set to "unknown" when not in brick_classes
             current_name = self.id_to_class.get(cls_id, "unknown")
 
-            # 1. LOOKUP DEPTH
-            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            # 1. LOOKUP DEPTH - use OBB center directly
+            cx, cy = int(x_center), int(y_center)
             # Define region of interest as a 10x10 array around center
             roi_x1 = max(0, cx - 5)
             roi_x2 = min(w_img, cx + 5)

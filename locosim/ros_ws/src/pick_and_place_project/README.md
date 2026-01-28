@@ -4,7 +4,12 @@ Autonomous robotic manipulation system for sorting objects using the UR5 manipul
 
 ## Quick Start
 
+- Start the docker
+- Enter the container
+- Inside the container (best the VM) run:
+
 ```bash
+roscore &
 bash /home/ubuntu/ros_ws/run_papa.sh
 ```
 
@@ -121,6 +126,7 @@ python test_perception.py  # Shows live detections with bounding boxes and arrow
 - Generated using `dataset_generator.py` (500 images from Gazebo)
 - OBB annotations with 4 corner coordinates
 - Config in `training_data/dataset_obb.yaml`
+- Google Colab training notebook: [training_data/yolo_training.ipynb](training_data/yolo_training.ipynb)
 - Regenerate: `python3 dataset_generator.py`
 
 ---
