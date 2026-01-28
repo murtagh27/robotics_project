@@ -553,11 +553,11 @@ class PapaController(BaseControllerFixed):
             rospy.set_param(f"{param_base}/d", d_gain)
             rospy.loginfo(f"  {joint}: P={p_gain}, I={i_gain}, D={d_gain} (heavy)")
         
-        # Set moderate gains for wrist joints (MUCH lower P, MUCH higher D to prevent spinning)
+        # Set moderate gains for wrist joints (VERY low P, VERY high D to prevent spinning)
         # Wrist spinning is caused by P too high and D too low
-        wrist_p = p_gain * 0.08  # Very low P for lighter joints - prevents spinning!
-        wrist_d = d_gain * 8.0   # Very high D for damping (prevents spinning!)
-        wrist_i = 0.01           # Nearly zero I to avoid windup
+        wrist_p = p_gain * 0.03  # Extremely low P - prevents spinning!
+        wrist_d = d_gain * 15.0  # Very high D for damping (prevents spinning!)
+        wrist_i = 0.0            # Zero I to avoid any windup
         for joint in light_joints:
             param_base = f"/ur5/ros_impedance_controller/gains/{joint}"
             rospy.set_param(f"{param_base}/p", wrist_p)

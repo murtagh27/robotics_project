@@ -16,26 +16,32 @@ RETRY_OFFSET = 0.01  # meters - offset for retry attempts
 
 
 class SlotManager:
-    """Manages target positions for placing bricks by class"""
+    """Manages placement grid slots organized by brick class"""
     
     def __init__(self, config):
         self.config = config
-        self.target_center = np.array(config.target_table_pos)
-        self.table_size = getattr(config, 'target_table_size', [0.5, 0.35])
         
-        # Track which slots are used per class
-        self.slots_per_class = defaultdict(int)  # class_name -> next_slot_index
+        # Placement area bounds (world frame)
+        self.x_min = 0.20
+        self.x_max = 0.40
+        self.y_min = 0.35
+        self.y_max = 0.65
+        self.z_height = 0.89
         
-        # Grid configuration
-        self.slots_per_row = 3  # 3 bricks per row
-        self.brick_spacing = 0.08  # 8cm between brick centers
+        # Slot tracking
+        self.slots_per_class = defaultdict(int)
+        
+        # Grid config
+        self.slots_per_row = 3
+        self.brick_spacing_x = (self.x_max - self.x_min) / max(self.slots_per_row - 1, 1)
+        self.brick_spacing_y = 0.10
         
     def get_slot_for_class(self, brick_class):
-        """Get next available slot for this brick class"""
+        """Get next available slot position for this brick class"""
         slot_idx = self.slots_per_class[brick_class]
         self.slots_per_class[brick_class] += 1
         
-        # Calculate position: each class gets its own row
+        # Each class gets its own row
         class_list = sorted(set(self.slots_per_class.keys()))
         try:
             row = class_list.index(brick_class)
@@ -44,15 +50,15 @@ class SlotManager:
         
         col = slot_idx % self.slots_per_row
         
-        # Calculate offset from table center
-        x_offset = (col - (self.slots_per_row - 1) / 2.0) * self.brick_spacing
-        y_offset = row * self.brick_spacing
+        x = self.x_min + col * self.brick_spacing_x
+        y = self.y_min + row * self.brick_spacing_y
+        z = self.z_height
         
-        position = self.target_center.copy()
-        position[0] += x_offset
-        position[1] += y_offset
+        # Clamp to bounds
+        x = max(self.x_min, min(x, self.x_max))
+        y = max(self.y_min, min(y, self.y_max))
         
-        return position
+        return np.array([x, y, z])
     
     def reset(self):
         """Reset all slot counters"""
@@ -204,6 +210,20 @@ class TaskScheduler:
                 # Don't place if we didn't grab anything - continue to next object
                 continue
 
+            # VERIFY PICK SUCCESS: Check if object is now lifted (attached to gripper)
+            obj_name = task['object']['name']
+            original_z = obj_pos[2]  # Original object Z position on table
+            if not self._verify_object_lifted(obj_name, original_z):
+                rospy.logerr(f"⛔ PICK VERIFICATION FAILED: {obj_name} is still on table!")
+                rospy.logerr(f"   Object was not picked up - SKIPPING to next object")
+                failed_tasks += 1
+                # Open gripper and continue to next object
+                self.robot_interface.send_gripper_command(self.config.gripper_open_pos)
+                rospy.sleep(0.5)
+                continue
+            
+            rospy.loginfo(f"✓ Pick verified: {obj_name} is now lifted")
+
             self.state = TaskState.PICKING
 
             # Place phase - only if pick succeeded
@@ -223,11 +243,14 @@ class TaskScheduler:
 
             rospy.loginfo(f"Task {idx+1} completed successfully")
             
-            # Return to safe height before next pick to avoid collisions
-            # This prevents the robot from moving horizontally at low height and hitting objects
+            # Return to safe height before next pick
             if idx < len(self.task_sequence) - 1:
-                rospy.loginfo("  Returning to safe height before next pick...")
-                self.motion_planner.move_to_joints(self.config.home_joint_config, self.robot_interface)
+                rospy.loginfo("  Returning to safe height...")
+                safe_z = getattr(self.config, 'safe_transit_height', 1.10)
+                safe_pos = np.array([0.75, 0.40, safe_z])
+                safe_joints = self.motion_planner.simple_ik(safe_pos, gripper_down=True)
+                if safe_joints is not None:
+                    self.motion_planner.move_to_joints(safe_joints, self.robot_interface)
 
         # Return to home
         self.state = TaskState.RETURNING_HOME
@@ -271,43 +294,93 @@ class TaskScheduler:
     
     def _attempt_pick_with_retry(self, obj_data, max_retries=MAX_PICK_RETRIES):
         """Attempt to pick object with retries using different approach strategies"""
-        original_pos = np.array(obj_data['position']).copy()
+        obj_name = obj_data['name']
         
-        # Different retry strategies: try different small offsets
+        # Retry offset strategies
         retry_offsets = [
-            np.array([0, 0, 0]),           # First try: exact position
-            np.array([0.01, 0, 0]),         # Retry 1: slight X offset
-            np.array([-0.01, 0, 0]),        # Retry 2: opposite X offset
-            np.array([0, 0.01, 0]),         # Retry 3: slight Y offset
-            np.array([0, 0, -0.01]),        # Retry 4: slightly lower
+            np.array([0, 0, 0]),
+            np.array([0.01, 0, 0]),
+            np.array([-0.01, 0, 0]),
+            np.array([0, 0.01, 0]),
+            np.array([0, 0, -0.01]),
         ]
         
         for attempt in range(max_retries):
             self.total_attempts += 1
             
+            # Refresh object position from perception
+            current_pos, current_orient = self._get_current_object_position(obj_name)
+            if current_pos is not None:
+                rospy.loginfo(f"  Refreshed position for {obj_name}: {current_pos}")
+                obj_data['position'] = current_pos
+                if current_orient is not None:
+                    obj_data['orientation'] = current_orient
+                    rospy.loginfo(f"  Refreshed orientation for {obj_name}: {current_orient}")
+            else:
+                rospy.logwarn(f"  Could not refresh position for {obj_name}, using stored position")
+            
             # Apply retry offset
             offset = retry_offsets[min(attempt, len(retry_offsets)-1)]
-            obj_data['position'] = original_pos + offset
+            pick_pos = np.array(obj_data['position']) + offset
+            
+            # Get orientation (may be None if not available)
+            pick_orient = obj_data.get('orientation', None)
             
             if attempt > 0:
                 self.retries_used += 1
-                rospy.logwarn(f"Retry attempt {attempt+1}/{max_retries} for picking {obj_data['name']}")
-                rospy.logwarn(f"  Using offset: {offset} -> new pos: {obj_data['position']}")
+                rospy.logwarn(f"Retry attempt {attempt+1}/{max_retries} for picking {obj_name}")
+                rospy.logwarn(f"  Using offset: {offset} -> pick pos: {pick_pos}")
             
-            success = self.motion_planner.pick_object(obj_data['position'], self.robot_interface)
+            success = self.motion_planner.pick_object(pick_pos, self.robot_interface, 
+                                                        object_orientation=pick_orient,
+                                                        object_class=obj_data.get('class', None))
             
             if success:
                 self.successful_picks += 1
-                rospy.loginfo(f"Successfully picked {obj_data['name']} on attempt {attempt+1}")
+                rospy.loginfo(f"Successfully picked {obj_name} on attempt {attempt+1}")
                 return True
             else:
                 self.failed_picks += 1
-                rospy.logwarn(f"Pick attempt {attempt+1} failed for {obj_data['name']}")
+                rospy.logwarn(f"Pick attempt {attempt+1} failed for {obj_name}")
         
-        # Restore original position
-        obj_data['position'] = original_pos
-        rospy.logerr(f"Failed to pick {obj_data['name']} after {max_retries} attempts")
+        rospy.logerr(f"Failed to pick {obj_name} after {max_retries} attempts")
         return False
+    
+    def _get_current_object_position(self, obj_name):
+        """Get current position and orientation of object from perception"""
+        # Get fresh object list from perception
+        objects = self.perception.get_detected_objects()
+        for obj in objects:
+            if obj['name'] == obj_name:
+                position = np.array(obj['position'])
+                orientation = obj.get('orientation', None)
+                if orientation is not None:
+                    orientation = np.array(orientation)
+                return position, orientation
+        return None, None
+    
+    def _verify_object_lifted(self, obj_name, original_z, min_lift_height=0.05):
+        """Check if object Z is above original position by at least min_lift_height"""
+        rospy.sleep(0.3)
+        
+        current_pos, _ = self._get_current_object_position(obj_name)
+        if current_pos is None:
+            rospy.logwarn(f"  Could not find {obj_name} in perception - assuming pick failed")
+            return False
+        
+        current_z = current_pos[2]
+        height_diff = current_z - original_z
+        
+        rospy.loginfo(f"  PICK VERIFICATION for {obj_name}:")
+        rospy.loginfo(f"    Original Z: {original_z:.3f}m")
+        rospy.loginfo(f"    Current Z:  {current_z:.3f}m")
+        rospy.loginfo(f"    Height diff: {height_diff:.3f}m (need > {min_lift_height:.3f}m)")
+        
+        if height_diff > min_lift_height:
+            return True
+        else:
+            rospy.logwarn(f"    Object NOT lifted: still at original height!")
+            return False
     
     def _attempt_place_with_retry(self, target_pos, max_retries=MAX_PLACE_RETRIES):
         """Attempt to place object with retries"""
