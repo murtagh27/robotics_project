@@ -1,7 +1,14 @@
+#!/usr/bin/env python3
 """
-Dataset Generator for the perception module.
-Generates a synthetic YOLO dataset by taking pictures or randomized Gazebo scenes
-and attaching brick location data to them.
+@file dataset_generator.py
+@brief Dataset generator for creating a synthetic YOLO OBB training dataset.
+@details Uses the object spawner to generate a random setup of bricks on the table, then captures
+         an RGB image. 3D brick corners taken from Gazebo model states are projected to 2D
+         bounding boxes and then transformed to YOLO OBB format
+         (class_id x_center y_center width height rotation_radians)
+         and are saved as labels. Also creates debug images with drawn bounding boxes and rotation.
+@author Benjamin Krech
+@date January 2026
 """
 
 import rospy
@@ -9,6 +16,7 @@ import cv2
 import numpy as np
 import tf.transformations as tr
 import random
+import math
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -22,7 +30,20 @@ from object_spawner import ObjectSpawner
 
 
 class DatasetGenerator:
+    """
+    @class DatasetGenerator
+    @brief Main class for generating the YOLO training dataset.
+    @details Manages the complete dataset generation pipeline including scene randomization,
+             camera data capture, 3D-to-2D projection of brick bounding boxes, and saving images
+             with YOLO annotations. Creates three outputs per frame:
+             training images, YOLO label files, and debug visualizations.
+    """
+
     def __init__(self, output_dir: str = "training_data"):
+        """
+        @brief Initializes the DatasetGenerator, configures settings, and checks all folders exist.
+        @param output_dir The folder in which the dataset is placed.
+        """
         rospy.init_node('dataset_generator', anonymous=False)
 
         self.bridge = CvBridge()
@@ -59,23 +80,40 @@ class DatasetGenerator:
         rospy.sleep(1.0)
 
     def _img_cb(self, msg: Image):
-        """Callback for camera RGB image topic. Converts ROS image to OpenCV format."""
+        """
+        @brief ROS callback for RGB camera image.
+        @param msg ROS image containing the image frame.
+        @return None
+        """
         try:
             self.latest_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
         except CvBridgeError as e:
             rospy.logerr(f"CV Bridge error: {e}")
 
     def _info_cb(self, msg: CameraInfo):
-        """Callback for camera info topic. Caches camera intrinsic parameters (K matrix)."""
+        """
+        @brief ROS callback for camera info.
+        @param msg ROS message containing the camera information.
+        @return None
+        """
         if self.camera_info is None:
             self.camera_info = msg
 
     def _state_cb(self, msg: ModelStates):
-        """Callback for Gazebo model states. Updates positions and orientations of all models."""
+        """
+        @brief ROS callback for receiving all Gazebo model states.
+        @param msg ROS message containing model states.
+        @return None
+        """
         self.model_states = msg
 
     def randomize_scene(self):
-        """Resets the scene by deleting old bricks and spawning new ones."""
+        """
+        @brief Creates a new random scene of objects.
+        @details Deletes all old bricks, resets spawner state, spawns 3-8 new objects, and waits
+                 for physics to settle.
+        @return None
+        """
         # 1. Stop broadcasting TFs for old objects to prevent errors
         self.spawner.stop_tf_broadcast()
 
@@ -101,7 +139,11 @@ class DatasetGenerator:
         rospy.sleep(self.spawn_settle_time)
 
     def get_camera_extrinsics(self) -> Optional[np.ndarray]:
-        """Calculates World-to-Camera transformation matrix."""
+        """
+        @brief Computes the World-to-Camera transformation matrix.
+        @return 4×4 numpy array representing the World-to-Camera transformation, or None if camera
+                is not found.
+        """
         if self.model_states is None:
             return None
 
@@ -119,7 +161,7 @@ class DatasetGenerator:
         T_world_link[0:3, 3] = trans
 
         # Correction for Optical Frame (Standard OpenCV: z-forward, x-right, y-down)
-        # Gazebo camera links are usually x-forward
+        # Gazebo camera links are x-forward
         T_link_optical = np.array([[0, 0, 1, 0], [-1, 0, 0, 0], [0, -1, 0, 0], [0, 0, 0, 1]])
 
         # We need World -> Camera so use Inverse of Camera -> World
@@ -128,7 +170,13 @@ class DatasetGenerator:
     def project_point(
         self, point_3d: np.ndarray, T_cw: np.ndarray, K: np.ndarray
     ) -> Optional[Tuple[int, int]]:
-        """Projects a 3D world point to 2D pixel coordinates."""
+        """
+        @brief Projects 3D point to 2D pixel coordinates with pinhole projection.
+        @param point_3d 3D point in world coordinates.
+        @param T_cw 4×4 World-to-Camera transformation matrix.
+        @param K 3×3 matrix containing camera intrinsics.
+        @return Tuple of pixel coordinates (u, v), or None if point is behind camera.
+        """
         p_h = np.append(point_3d, 1)  # Homogeneous
         p_cam = T_cw @ p_h
 
@@ -143,6 +191,18 @@ class DatasetGenerator:
         return (int(u), int(v))
 
     def capture_frame(self, frame_id: int):
+        """
+        @brief Captures and processes a single frame, generating YOLO OBB annotations for it.
+        @details 1. Validates all data is available.
+                 2. Loops through all brick models found in Gazebo.
+                 3. Calculates all the corners of the brick.
+                 4. Converts corners to 2D.
+                 5. Extracts rotation angle from Gazebo orientation (Z-axis rotation).
+                 6. Takes maximum coordinates and transforms them to YOLO OBB format.
+                 7. Saves image, labels, and debugging image.
+        @param frame_id Integer numbering the frame for filename.
+        @return None - saves files to disk.
+        """
         if self.model_states is None or self.latest_image is None or self.camera_info is None:
             rospy.logwarn_throttle(2, "Waiting for topics...")
             return
@@ -176,6 +236,10 @@ class DatasetGenerator:
 
             T_obj = tr.quaternion_matrix(quat)
             T_obj[0:3, 3] = pos
+
+            # Extract Z-axis rotation (yaw) from quaternion
+            euler = tr.euler_from_quaternion(quat, 'sxyz')
+            z_rotation = euler[2]  # Z-axis rotation from Gazebo
 
             # Get 3D Corners
             dims = BRICK_CLASSES[brick_type]['size']
@@ -217,27 +281,62 @@ class DatasetGenerator:
             if max_x <= min_x or max_y <= min_y:
                 continue
 
-            # YOLO Format: class x_center y_center width height (normalized)
-            bw = (max_x - min_x) / img_w
-            bh = (max_y - min_y) / img_h
-            bx = (min_x + max_x) / 2.0 / img_w
-            by = (min_y + max_y) / 2.0 / img_h
+            # Get the 2D projected corners to calculate oriented bounding box
+            if len(pixel_coords) >= 4:
+                # Fit oriented bounding box to the projected corners
+                pixel_coords_for_rect = np.array(pixel_coords, dtype=np.float32)
+                rect = cv2.minAreaRect(pixel_coords_for_rect)
+                box_corners = cv2.boxPoints(rect)  # Get 4 corner points
 
-            labels.append(f"{class_id} {bx:.6f} {by:.6f} {bw:.6f} {bh:.6f}")
+                # Normalize corner coordinates
+                box_corners_norm = box_corners.copy()
+                box_corners_norm[:, 0] /= img_w  # Normalize x
+                box_corners_norm[:, 1] /= img_h  # Normalize y
+
+                # Extract angle for visualization
+                (_, _), (w_rect, h_rect), angle_deg = rect
+                rotation_radians = math.radians(angle_deg)
+
+                # YOLO OBB Format: class x1 y1 x2 y2 x3 y3 x4 y4 (normalized corner coordinates)
+                # Flatten the 4 corner points into 8 values
+                obb_coords = box_corners_norm.flatten()
+                labels.append(
+                    f"{class_id} {obb_coords[0]:.6f} {obb_coords[1]:.6f} {obb_coords[2]:.6f} {obb_coords[3]:.6f} {obb_coords[4]:.6f} {obb_coords[5]:.6f} {obb_coords[6]:.6f} {obb_coords[7]:.6f}"
+                )
+            else:
+                # Fallback: not enough corners, skip this object
+                continue
 
             # Draw Debug Visuals
-            cv2.rectangle(
-                debug_img, (int(min_x), int(min_y)), (int(max_x), int(max_y)), (0, 255, 0), 2
-            )
-            cv2.putText(
-                debug_img,
-                brick_type,
-                (int(min_x), int(min_y) - 5),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (0, 0, 255),
-                1,
-            )
+            # Draw the oriented bounding box (not axis-aligned)
+            if len(pixel_coords) >= 4:
+                box_corners_int = box_corners.astype(int)
+                cv2.drawContours(debug_img, [box_corners_int], 0, (0, 255, 0), 2)
+
+                # Draw orientation arrow from center
+                center_x = int(np.mean(box_corners[:, 0]))
+                center_y = int(np.mean(box_corners[:, 1]))
+                arrow_length = min(max_x - min_x, max_y - min_y) * 0.4
+                arrow_end_x = int(center_x + arrow_length * math.cos(rotation_radians))
+                arrow_end_y = int(center_y + arrow_length * math.sin(rotation_radians))
+                cv2.arrowedLine(
+                    debug_img,
+                    (center_x, center_y),
+                    (arrow_end_x, arrow_end_y),
+                    (255, 0, 0),
+                    2,
+                    tipLength=0.3,
+                )
+
+                cv2.putText(
+                    debug_img,
+                    f"{brick_type} ({math.degrees(rotation_radians):.0f}deg)",
+                    (int(min_x), int(min_y) - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (0, 0, 255),
+                    1,
+                )
 
         # Save to disk
         file_id = f"{frame_id:05d}"
@@ -251,7 +350,11 @@ class DatasetGenerator:
             rospy.loginfo(f"Saved frame {file_id}: {len(labels)} objects")
 
     def run(self, num_frames: int = 500):
-        """Main generation loop."""
+        """
+        @brief Main function that runs the frame generation in a loop.
+        @param num_frames The number of frames to be generated.
+        @return None
+        """
         rospy.loginfo(f"Starting generation of {num_frames} frames...")
 
         for i in range(num_frames):

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Object Spawner Module for PAPA
-Automatically spawns random objects from brick_description package
-Supports multiple object classes with different geometries (STL files)
+@file object_spawner.py
+@brief Object Spawner Module for PAPA
+@details Automatically spawns random objects from brick_description package.
+         Supports multiple object classes with different geometries (STL files).
 """
 
 import rospy
@@ -18,21 +19,19 @@ from brick_classes import BRICK_CLASSES
 
 class ObjectSpawner:
     """
-    Handles spawning of objects from brick_description package.
-
-    Supports multiple object classes with known geometries defined in STL files.
-    Automatically uploads URDF descriptions to ROS parameter server and spawns
-    objects in Gazebo at random or specified positions.
+    @class ObjectSpawner
+    @brief Handles spawning of objects from brick_description package.
+    @details Supports multiple object classes with known geometries defined in STL files.
+             Automatically uploads URDF descriptions to ROS parameter server and spawns
+             objects in Gazebo at random or specified positions.
     """
 
     def __init__(self, table_height=0.85, spawn_area_center=[0.5, 0.5], spawn_area_size=[0.3, 0.3]):
         """
-        Initialize the object spawner.
-
-        Args:
-            table_height (float): Z-coordinate of table surface
-            spawn_area_center (list): [x, y] center of spawning area
-            spawn_area_size (list): [width, depth] of spawning area
+        @brief Initialize the object spawner.
+        @param table_height Z-coordinate of table surface.
+        @param spawn_area_center [x, y] center of spawning area.
+        @param spawn_area_size [width, depth] of spawning area.
         """
         self.table_height = table_height
         self.spawn_area_center = np.array(spawn_area_center)
@@ -53,8 +52,9 @@ class ObjectSpawner:
 
     def _ensure_connection(self):
         """
-        Connect to Gazebo service only when needed.
-        This prevents 'Deadlock' if the spawner is created before Gazebo starts.
+        @brief Connect to Gazebo service only when needed.
+        @details This prevents 'Deadlock' if the spawner is created before Gazebo starts.
+        @return True if connection successful, False otherwise.
         """
         if self.spawn_client is not None:
             return True
@@ -72,14 +72,10 @@ class ObjectSpawner:
 
     def generate_urdf(self, brick_type, object_name):
         """
-        Generate URDF description for a brick type.
-
-        Args:
-            brick_type (str): Type from BRICK_CLASSES keys
-            object_name (str): Unique name for this object instance
-
-        Returns:
-            str: URDF XML string
+        @brief Generate URDF description for a brick type.
+        @param brick_type Type from BRICK_CLASSES keys.
+        @param object_name Unique name for this object instance.
+        @return URDF XML string.
         """
         if brick_type not in BRICK_CLASSES:
             raise ValueError(f"Unknown brick type: {brick_type}")
@@ -134,11 +130,9 @@ class ObjectSpawner:
 
     def _random_color(self):
         """
-        Generate a random color for object visualization.
-        Returns matching RGB values for RViz and Gazebo material name.
-
-        Returns:
-            tuple: (rgb_list, gazebo_material_string)
+        @brief Generate a random color for object visualization.
+        @details Returns matching RGB values for RViz and Gazebo material name.
+        @return Tuple containing (rgb_list, gazebo_material_string).
         """
         # Define colors with matching RGB and Gazebo material names
         color_options = [
@@ -155,11 +149,9 @@ class ObjectSpawner:
 
     def _random_rotation(self):
         """
-        Generate random rotation as quaternion.
-        Generates random rotation around Z axis (yaw) to keep objects upright.
-
-        Returns:
-            np.ndarray: [x, y, z, w] quaternion
+        @brief Generate random rotation as quaternion.
+        @details Generates random rotation around Z axis (yaw) to keep objects upright.
+        @return [x, y, z, w] quaternion as np.ndarray.
         """
         # Random yaw angle (rotation around Z axis)
         yaw = random.uniform(0, 2 * np.pi)
@@ -174,38 +166,38 @@ class ObjectSpawner:
 
     def _random_position(self, min_distance=0.12, max_attempts=100):
         """
-        Generate random position within spawn area, ensuring minimum distance from other objects.
-
-        Args:
-            min_distance (float): Minimum distance from other spawned objects (default 12cm)
-            max_attempts (int): Maximum attempts to find valid position
-
-        Returns:
-            np.ndarray: [x, y, z] position on table surfaces
+        @brief Generate random position within spawn area, ensuring minimum distance from other objects.
+        @param min_distance Minimum distance from other spawned objects (default 0.12m).
+        @param max_attempts Maximum attempts to find valid position.
+        @return [x, y, z] position on table surface as np.ndarray.
         """
         half_size = self.spawn_area_size / 2.0
-        
+
         for attempt in range(max_attempts):
             x = self.spawn_area_center[0] + random.uniform(-half_size[0], half_size[0])
             y = self.spawn_area_center[1] + random.uniform(-half_size[1], half_size[1])
             z = self.table_height + 0.1  # Slightly above table to avoid spawn collisions
-            
+
             candidate = np.array([x, y, z])
-            
+
             # Check distance to all existing spawned objects
             valid = True
             for obj in self.spawned_objects:
                 existing_pos = obj['position']
-                dist = np.sqrt((candidate[0] - existing_pos[0])**2 + (candidate[1] - existing_pos[1])**2)
+                dist = np.sqrt(
+                    (candidate[0] - existing_pos[0]) ** 2 + (candidate[1] - existing_pos[1]) ** 2
+                )
                 if dist < min_distance:
                     valid = False
                     break
-            
+
             if valid:
                 return candidate
-        
+
         # If we couldn't find a valid position, return random anyway with warning
-        rospy.logwarn(f"Could not find position with {min_distance}m spacing after {max_attempts} attempts")
+        rospy.logwarn(
+            f"Could not find position with {min_distance}m spacing after {max_attempts} attempts"
+        )
         x = self.spawn_area_center[0] + random.uniform(-half_size[0], half_size[0])
         y = self.spawn_area_center[1] + random.uniform(-half_size[1], half_size[1])
         z = self.table_height + 0.1
@@ -213,36 +205,34 @@ class ObjectSpawner:
 
     def spawn_object(self, brick_type=None, position=None, rotation=None, object_name=None):
         """
-        Spawn a single object in Gazebo.
-
-        Args:
-            brick_type (str, optional): Type from BRICK_CLASSES. Random if None.
-            position (np.ndarray, optional): [x, y, z] position. Random if None.
-            rotation (np.ndarray, optional): [x, y, z, w] quaternion. Random if None.
-            object_name (str, optional): Unique name. Auto-generated if None.
-
-        Returns:
-            dict: Information about spawned object
+        @brief Spawn a single object in Gazebo.
+        @details Generates random values for all non-specified parameters and creates a unique
+                 object name. Then generates the URDF and uploads it to the server, spawns the
+                 object, and stores its info.
+        @param brick_type Type from BRICK_CLASSES. Random if None.
+        @param position [x, y, z] position. Random if None.
+        @param rotation [x, y, z, w] quaternion. Random if None.
+        @param object_name Unique name. Auto-generated if None.
+        @return Dictionary containing information about spawned object, or None if spawning failed.
         """
-        # 1. Ensure connection before trying to spawn
+        # Ensure connection before trying to spawn
         if not self._ensure_connection():
             return None
 
+        # Generate random values fo all variables if not defined
         if brick_type is None:
             brick_type = random.choice(list(BRICK_CLASSES.keys()))
+
+        if position is None:
+            position = self._random_position()
+
+        if rotation is None:
+            rotation = self._random_rotation()
 
         # Generate unique object name
         if object_name is None:
             object_id = len(self.spawned_objects) + 1
             object_name = f"brick_{object_id}_{brick_type.replace('-', '_')}"
-
-        # Generate random position if not specified
-        if position is None:
-            position = self._random_position()
-
-        # Generate random rotation if not specified
-        if rotation is None:
-            rotation = self._random_rotation()
 
         rospy.logdebug(f"Spawning {object_name}...")
 
@@ -254,8 +244,10 @@ class ObjectSpawner:
 
             pose = Pose(Point(*position), Quaternion(*rotation))
 
-            # Type guard: ensure spawn_client is not None
-            assert self.spawn_client is not None, "Spawn client not initialized"
+            # Ensure spawn_client is not None
+            if self.spawn_client is None:
+                rospy.logerr("Spawn client not initialized")
+                return None
             self.spawn_client(object_name, urdf_content, "/", pose, "world")
 
             self.tf_broadcasters.append((object_name, position, rotation))
@@ -280,14 +272,9 @@ class ObjectSpawner:
 
     def spawn_one_of_each(self, allowed_types=None):
         """
-        Spawn exactly one instance of each object type.
-        This is the recommended default for comprehensive testing.
-
-        Args:
-            allowed_types (list, optional): List of allowed brick types. All types if None.
-
-        Returns:
-            list: List of spawned object info dicts
+        @brief Spawn exactly one instance of each object type.
+        @param allowed_types List of allowed brick types. All types if None.
+        @return List of spawned object info dictionaries.
         """
         if allowed_types is None:
             allowed_types = list(BRICK_CLASSES.keys())
@@ -310,14 +297,10 @@ class ObjectSpawner:
 
     def spawn_random_objects(self, num_objects=5, allowed_types=None):
         """
-        Spawn multiple random objects (may include duplicates).
-
-        Args:
-            num_objects (int): Number of objects to spawn
-            allowed_types (list, optional): List of allowed brick types. All types if None.
-
-        Returns:
-            list: List of spawned object info dicts
+        @brief Spawn multiple random objects (may include duplicates).
+        @param num_objects Number of objects to spawn.
+        @param allowed_types List of allowed brick types. All types if None.
+        @return List of spawned object info dictionaries.
         """
         rospy.loginfo(f"Spawning {num_objects} random objects...")
 
@@ -339,7 +322,10 @@ class ObjectSpawner:
         return spawned
 
     def _start_tf_broadcast(self):
-        """Start background thread to broadcast TF transforms for all objects."""
+        """
+        @brief Start background thread to broadcast TF transforms for all objects.
+        @return None
+        """
         if self.tf_thread_running:
             return
 
@@ -361,24 +347,25 @@ class ObjectSpawner:
         self.tf_thread.start()
 
     def stop_tf_broadcast(self):
-        """Stop the TF broadcasting thread."""
+        """
+        @brief Stop the TF broadcasting thread.
+        @return None
+        """
         self.tf_thread_running = False
         if self.tf_thread:
             self.tf_thread.join(timeout=1.0)
 
     def get_spawned_objects(self):
         """
-        Get list of all spawned objects.
-
-        Returns:
-            list: List of object info dicts
+        @brief Get list of all spawned objects.
+        @return List of object info dictionaries
         """
         return self.spawned_objects.copy()
 
     def clear_all_objects(self):
         """
-        Remove all spawned objects from Gazebo.
-        Cleans up TF broadcasters, parameter server entries, and internal state.
+        @brief Remove all spawned objects from Gazebo.
+        @details Cleans up TF broadcasters, parameter server entries, and internal state.
         """
         if not self.spawned_objects:
             rospy.loginfo("No objects to clear")
@@ -422,7 +409,8 @@ class ObjectSpawner:
 
 def main():
     """
-    Standalone test of object spawner.
+    @brief Standalone test of object spawner.
+    @details Creates the object spawner and spawns 3 objects.
     """
     rospy.init_node('object_spawner_test', anonymous=True)
 
@@ -448,5 +436,5 @@ if __name__ == '__main__':
     try:
         main()
     except rospy.ROSInterruptException:
-        # Normal shutdown on ROS interrupt (e.g., Ctrl+C)
+        # Normal shutdown on ROS interrupt
         rospy.loginfo("ObjectSpawner node interrupted, shutting down.")

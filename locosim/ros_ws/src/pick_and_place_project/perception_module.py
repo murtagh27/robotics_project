@@ -1,18 +1,17 @@
+#!/usr/bin/env python3
 """
 @file perception_module.py
 @brief Perception module for object detection and localization.
 @details This module handles computer vision tasks for detecting and localizing objects.
-         It uses YOLO combined with an RGB-D camera. Camera images are processed to detect
-         all objects and calculate their position and rotation.
+         It uses YOLOv8-OBB (Oriented Bounding Box) combined with an RGB-D camera. Camera
+         images are processed to detect all objects and calculate their position and rotation.
 @author Benjamin Krech
 @date January 2026
 """
 
 import numpy as np
 import rospy
-import cv2
 import os
-import math
 from collections import deque
 from sensor_msgs.msg import Image, CameraInfo
 from cv_bridge import CvBridge
@@ -25,7 +24,8 @@ EMA_ALPHA = 0.3  # Exponential Moving Average smoothing factor
 
 
 class PerceptionModule:
-    """@class
+    """
+    @class PerceptionModule
     @brief Main perception class handling YOLO-based object detection and 3D localization.
     @details This class manages the complete perception pipeline including YOLO model initialization,
              ROS subscribers, the actual object detection as a combination of YOLO and the depth data,
@@ -35,18 +35,19 @@ class PerceptionModule:
     """
 
     def __init__(self, config=None):
-        """@brief Constructor that initializes the module with configuration data.
+        """
+        @brief Constructor that initializes the module with configuration data.
         @param config Optional configuration data, currently not in use.
         """
         self.config = config
         self.detected_objects = []
         self.ground_truth_objects = []
         self.robot_pose = None
-        
+
         # Freshness tracking
         self.last_detection_time = None
         self.last_ground_truth_time = None
-        
+
         # Position history for EMA filtering
         self.position_history = {}  # object_name -> deque of positions
 
@@ -56,7 +57,7 @@ class PerceptionModule:
             rospy.logerr(f"YOLO weights not found at {weights_path}!")
             self.model = None
         else:
-            rospy.loginfo(f"Loading YOLO from {weights_path}...")
+            rospy.loginfo(f"Loading YOLO OBB model from {weights_path}...")
             self.model = YOLO(weights_path)
 
         self.id_to_class = {v['id']: k for k, v in BRICK_CLASSES.items()}
@@ -81,29 +82,29 @@ class PerceptionModule:
         if self.last_detection_time is None:
             return float('inf')
         return (rospy.Time.now() - self.last_detection_time).to_sec()
-    
+
     def is_fresh(self):
         """Check if last detection is fresh"""
         return self.get_detection_age() < FRESHNESS_THRESHOLD
-    
+
     def _apply_ema_filter(self, object_name, new_position):
         """Apply Exponential Moving Average filter to position"""
         if object_name not in self.position_history:
             self.position_history[object_name] = deque(maxlen=5)
             self.position_history[object_name].append(new_position)
             return new_position
-        
+
         history = self.position_history[object_name]
         if len(history) == 0:
             history.append(new_position)
             return new_position
-        
+
         # EMA: filtered = alpha * new + (1-alpha) * old
         old_position = history[-1]
         filtered = EMA_ALPHA * new_position + (1 - EMA_ALPHA) * old_position
         history.append(filtered)
         return filtered
-    
+
     def clear_position_history(self, object_name=None):
         """Clear position history for object or all objects"""
         if object_name:
@@ -113,7 +114,8 @@ class PerceptionModule:
             self.position_history.clear()
 
     def rgb_callback(self, msg):
-        """@brief ROS callback for RGB camera images.
+        """
+        @brief ROS callback for RGB camera images.
         @param msg ROS message containing the camera frame.
         @return None
         """
@@ -123,7 +125,8 @@ class PerceptionModule:
             rospy.logerr(f"RGB Error: {e}")
 
     def depth_callback(self, msg):
-        """@brief ROS callback for camera depth images.
+        """
+        @brief ROS callback for camera depth images.
         @param msg ROS message containing the depth data.
         @return None
         """
@@ -134,7 +137,8 @@ class PerceptionModule:
             rospy.logerr(f"Depth Error: {e}")
 
     def camera_info_callback(self, msg):
-        """@brief ROS callback for camera info.
+        """
+        @brief ROS callback for camera info.
         @param msg ROS message containing the camera information.
         @return None
         """
@@ -142,40 +146,43 @@ class PerceptionModule:
             self.camera_info = msg
 
     def get_detected_objects(self):
-        """@brief Main interface for returning the detected objects.
+        """
+        @brief Main interface for returning the detected objects.
         @return List of detected objects containing information about class, position, orientation,
                 dimensions, and prediction confidence.
         """
         self.last_detection_time = rospy.Time.now()
-        
+
         # If using ground truth mode, return ground truth objects instead of camera-based detection
         if self.config is not None and getattr(self.config, 'use_ground_truth', False):
             return self.ground_truth_objects
-        
+
         # Otherwise use camera-based detection
         if self.model is None:
+            rospy.loginfo("No model found. Returning.")
             return []
         self._detect_and_process()
         return self.detected_objects
 
     def get_ground_truth_objects(self):
-        """@brief Interface for returning the Gazebo ground truth objects.
+        """
+        @brief Interface for returning the Gazebo ground truth objects.
         @return List of all objects in the world containing information about name, class, position,
                 and orientation.
         """
         return self.ground_truth_objects
 
     def _detect_and_process(self):
-        """@brief Main processing pipeline that detects and classifies all objects.
-        @details Takes the YOLO predictions as a base truth and processes them:
+        """
+        @brief Main processing pipeline that detects and classifies all objects.
+        @details Takes the YOLO OBB predictions as a base truth and processes them:
                  1. The height of the object is calculated via the depth information of the RGB-D camera.
                  2. The position relative to the robot is calculated by transforming the detected position.
                  3. The object height is calculated, and if it doesn't match with the YOLO prediction,
                     the class is changed. (Since the camera is looking straight down, it is very hard
                     for YOLO to classify objects that only differ in height.)
                  4. The bottom position of the object is calculated via the known height of the bricks.
-                 5. The rotation of the object is calculated via minimum area rectangle fitting and
-                    longest edge detection.
+                 5. The rotation of the object is obtained directly from YOLO OBB predictions.
         @return None
         """
         if (
@@ -205,16 +212,25 @@ class PerceptionModule:
         result = results[0]
         new_objects = []
 
-        for box in result.boxes:
-            x1, y1, x2, y2 = map(int, box.xyxy[0])
-            conf = float(box.conf[0])
-            cls_id = int(box.cls[0])
+        if result.obb is None:
+            rospy.logwarn("No OBB detections found")
+            return
+
+        num_detections = len(result.obb.cls)
+
+        for idx in range(num_detections):
+            # Extract OBB data
+            xywhr = result.obb.xywhr[idx].cpu().numpy()
+            x_center, y_center, width, height, rotation_rad = xywhr
+
+            conf = float(result.obb.conf[idx])
+            cls_id = int(result.obb.cls[idx])
 
             # Get name from YOLO id or set to "unknown" when not in brick_classes
             current_name = self.id_to_class.get(cls_id, "unknown")
 
             # 1. LOOKUP DEPTH
-            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            cx, cy = int(x_center), int(y_center)
             # Define region of interest as a 10x10 array around center
             roi_x1 = max(0, cx - 5)
             roi_x2 = min(w_img, cx + 5)
@@ -241,11 +257,11 @@ class PerceptionModule:
                     self.cam_world_pos[2] - z_surface_depth,
                 ]
             )
-            # Transform to robot relative coordinates including CALIBRATION
-            pos_surface_rel = pos_world_abs_surface - current_robot_pos - self.calibration_offset
+            # Apply calibration offset
+            pos_surface_world = pos_world_abs_surface - self.calibration_offset
 
             # 3. CORRECT CLASSES BASED ON HEIGHT
-            final_name = self._correct_classes_by_height(current_name, pos_surface_rel[2])
+            final_name = self._correct_classes_by_height(current_name, pos_surface_world[2])
 
             # 4. CALCULATE BOTTOM POSITION
             if final_name in BRICK_CLASSES:
@@ -258,14 +274,13 @@ class PerceptionModule:
                 class_str = 'unknown'
 
             # Shift from top surface to bottom
-            pos_final = pos_surface_rel.copy()
+            pos_final = pos_surface_world.copy()
             pos_final[2] -= brick_height
 
-            # 5. CALCULATE ORIENTATION
-            angle = self._calculate_angle_longest_edge(image, box)
-            qz = np.sin(angle / 2.0)
-            qw = np.cos(angle / 2.0)
-            
+            # 5. GET ORIENTATION FROM OBB
+            qz = np.sin(rotation_rad / 2.0)
+            qw = np.cos(rotation_rad / 2.0)
+
             # Apply EMA filter to position
             object_name = f"{final_name}_{len(new_objects)}"
             filtered_pos = self._apply_ema_filter(object_name, pos_final)
@@ -285,7 +300,8 @@ class PerceptionModule:
         self.detected_objects = self._filter_duplicates(new_objects)
 
     def _correct_classes_by_height(self, current_name, z_height):
-        """@brief Changes the YOLO predicted class if the depth information disagrees.
+        """
+        @brief Changes the YOLO predicted class if the depth information disagrees.
         @param current_name The YOLO predicted class.
         @param z_height The z-coordinate of the brick detected by the camera.
         @return The final class, either corrected or still the same as YOLO.
@@ -309,65 +325,9 @@ class PerceptionModule:
 
         return potential_name
 
-    def _calculate_angle_longest_edge(self, image, box):
-        """@brief Calculates the angle of a brick by fitting a rectangle to its contour and
-                 finding the longest edge.
-        @param image The captured RGB image.
-        @param box The YOLO bounding box.
-        @return The angle (in radians) by which the longest side is rotated.
-        """
-        # Expand the bounding box to capture full object
-        x1, y1, x2, y2 = map(int, box.xyxy[0])
-        pad = 5
-        h_img, w_img, _ = image.shape
-        x1 = max(0, x1 - pad)
-        y1 = max(0, y1 - pad)
-        x2 = min(w_img, x2 + pad)
-        y2 = min(h_img, y2 + pad)
-
-        # Crop out the region from the image
-        crop = image[y1:y2, x1:x2]
-        if crop.size == 0:
-            return 0.0
-
-        # Convert image to black and white
-        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-        # Smooth out noise
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        # Invert and convert to pure black and white
-        _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-
-        # Find contours
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            return 0.0
-
-        largest_contour = max(contours, key=cv2.contourArea)
-        if cv2.contourArea(largest_contour) < 50:
-            return 0.0
-
-        # Fit minimum rectangle around the contour
-        rect = cv2.minAreaRect(largest_contour)
-        box_pts = cv2.boxPoints(rect)
-        box_pts = np.int0(box_pts)
-
-        # Find the longest edge & calculate the angle of the brick
-        d1 = np.linalg.norm(box_pts[0] - box_pts[1])
-        d2 = np.linalg.norm(box_pts[1] - box_pts[2])
-
-        if d1 > d2:
-            dx = box_pts[1][0] - box_pts[0][0]
-            dy = box_pts[1][1] - box_pts[0][1]
-            angle = math.atan2(dy, dx)
-        else:
-            dx = box_pts[2][0] - box_pts[1][0]
-            dy = box_pts[2][1] - box_pts[1][1]
-            angle = math.atan2(dy, dx)
-
-        return angle
-
     def _filter_duplicates(self, objects, threshold=0.025):
-        """@brief Filters out duplicates from a list of detected objects.
+        """
+        @brief Filters out duplicates from a list of detected objects.
         @param objects List of detected objects to filter.
         @param threshold Distance threshold (in meters) determining when two objects are the same.
         @return The filtered list without duplicates.
@@ -390,7 +350,8 @@ class PerceptionModule:
         return unique_objects
 
     def _extract_brick_type_from_name(self, name):
-        """@brief Extracts the brick type from a Gazebo object name.
+        """
+        @brief Extracts the brick type from a Gazebo object name.
         @param name The Gazebo object name (e.g., 'brick_0_X2-Y2-Z2').
         @return The extracted brick type (e.g., 'X2-Y2-Z2') or None if extraction failed.
         """
@@ -401,7 +362,8 @@ class PerceptionModule:
         return None
 
     def update_ground_truth(self, gazebo_model_states):
-        """@brief Updates ground truth object list from Gazebo simulation.
+        """
+        @brief Updates ground truth object list from Gazebo simulation.
         @param gazebo_model_states ROS ModelStates message containing all models in the simulation
                                     with their poses.
         @return None
