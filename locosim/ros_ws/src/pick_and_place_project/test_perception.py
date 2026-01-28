@@ -2,8 +2,9 @@
 """
 @file test_perception.py
 @brief Perception testing and visualization tool.
-@details Subscribes to camera feed and visualizes detected bricks with oriented bounding boxes
-         and orientation arrows. Used for testing and verifying YOLO OBB model performance.
+@details Subscribes to camera feed and visualizes detected bricks from the PerceptionModule.
+         Shows what the actual perception pipeline outputs (including depth processing,
+         class correction, and duplicate filtering).
 @author Benjamin Krech
 @date January 2026
 """
@@ -14,30 +15,30 @@ import numpy as np
 import math
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
-from ultralytics import YOLO
+from perception_module import PerceptionModule
 from brick_classes import BRICK_CLASSES
 
 
-class OrientationVisualizer:
+class PerceptionVisualizer:
     """
-    @class OrientationVisualizer
-    @brief Visualizes brick detections with oriented bounding boxes and arrows.
+    @class PerceptionVisualizer
+    @brief Visualizes perception module output with 3D positions and orientations.
     """
 
     def __init__(self):
         """
-        @brief Initializes the visualizer with YOLO model and ROS subscribers.
+        @brief Initializes the visualizer with PerceptionModule and ROS subscribers.
         """
-        rospy.init_node('orientation_visualizer', anonymous=True)
+        rospy.init_node('perception_visualizer', anonymous=True)
         self.bridge = CvBridge()
 
-        model_path = '/home/ubuntu/ros_ws/src/pick_and_place_project/weights/best.pt'
-        self.model = YOLO(model_path)
-        rospy.loginfo(f"Loaded OBB model from {model_path}")
+        # Use actual perception module
+        self.perception = PerceptionModule()
+        rospy.loginfo("Initialized PerceptionModule")
 
         self.latest_rgb = None
         rospy.Subscriber('/camera/rgb/image_raw', Image, self.rgb_callback)
-        rospy.loginfo("Orientation Visualizer started. Press 'q' to quit.")
+        rospy.loginfo("Perception Visualizer started. Press 'q' to quit.")
 
     def rgb_callback(self, msg):
         """
@@ -49,16 +50,35 @@ class OrientationVisualizer:
         except Exception as e:
             rospy.logerr(f"RGB Error: {e}")
 
-    def draw_obb_box(self, image, corners, color=(0, 255, 0), thickness=2):
+    def project_3d_to_2d(self, position_3d):
         """
-        @brief Draws oriented bounding box on image.
-        @param image Target image to draw on.
-        @param corners Array of 4 corner points.
-        @param color Box color in BGR format.
-        @param thickness Line thickness.
+        @brief Projects 3D world position to 2D pixel coordinates.
+        @param position_3d 3D position [x, y, z] in world frame.
+        @return Tuple of (pixel_x, pixel_y) or None if projection fails.
         """
-        corners = corners.astype(np.int32)
-        cv2.polylines(image, [corners], isClosed=True, color=color, thickness=thickness)
+        if self.perception.camera_info is None:
+            return None
+
+        # Get camera intrinsics
+        fx = self.perception.camera_info.K[0]
+        fy = self.perception.camera_info.K[4]
+        cx_cam = self.perception.camera_info.K[2]
+        cy_cam = self.perception.camera_info.K[5]
+
+        # Transform from world to camera frame (reverse of perception transform)
+        cam_pos = self.perception.cam_world_pos
+        Y_cam_metric = cam_pos[0] - position_3d[0]
+        X_cam_metric = cam_pos[1] - position_3d[1]
+        z_depth = cam_pos[2] - position_3d[2]
+
+        if z_depth <= 0:
+            return None
+
+        # Project to image plane
+        pixel_x = int(cx_cam + (X_cam_metric * fx / z_depth))
+        pixel_y = int(cy_cam + (Y_cam_metric * fy / z_depth))
+
+        return (pixel_x, pixel_y)
 
     def draw_orientation_arrow(self, image, cx, cy, angle, length=50, color=(0, 255, 0)):
         """
@@ -78,86 +98,53 @@ class OrientationVisualizer:
     def run(self):
         """
         @brief Main loop processing camera feed and displaying detections.
-        @details Runs at 5Hz, displays live feed with OBB boxes, orientation arrows,
-                 and class labels. Press 'q' to quit.
+        @details Runs at 1Hz, gets detections from PerceptionModule and visualizes them.
+                 Press 'q' to quit.
         """
-        rate = rospy.Rate(5)
-        cv2.namedWindow('Brick Orientations', cv2.WINDOW_NORMAL)
+        rate = rospy.Rate(1)
+        cv2.namedWindow('Perception Output', cv2.WINDOW_NORMAL)
 
         while not rospy.is_shutdown():
             if self.latest_rgb is not None:
                 vis_image = self.latest_rgb.copy()
 
-                # Run detection
-                results = self.model(vis_image, verbose=False)
+                # Get detections from actual perception module
+                detected_objects = self.perception.get_detected_objects()
+                num_detections = len(detected_objects)
 
-                num_detections = 0
-                if len(results) > 0 and results[0].obb is not None:
-                    obb_data = results[0].obb
-                    num_detections = len(obb_data.xywhr)
+                # Visualize each detected object
+                for obj in detected_objects:
+                    # Project 3D position to 2D image coordinates
+                    pixel_coords = self.project_3d_to_2d(obj['position'])
+                    if pixel_coords is None:
+                        continue
 
-                    # Get class names
-                    class_names = results[0].names
+                    cx, cy = pixel_coords
 
-                    for idx in range(num_detections):
-                        cx, cy, w, h, angle_rad = obb_data.xywhr[idx].cpu().numpy()
-                        confidence = obb_data.conf[idx].cpu().numpy()
-                        class_id = int(obb_data.cls[idx].cpu().numpy())
-                        class_name = class_names[class_id]
+                    # Extract orientation (quaternion to yaw angle)
+                    qz, qw = obj['orientation'][2], obj['orientation'][3]
+                    angle_rad = 2 * math.atan2(qz, qw)
 
-                        # Get the 4 corner points
-                        if hasattr(obb_data, 'xyxyxyxy'):
-                            # Use pre-computed corners if available
-                            corners = obb_data.xyxyxyxy[idx].cpu().numpy().reshape(4, 2)
-                        else:
-                            # Calculate corners from center, dimensions, and rotation
-                            cos_a = math.cos(angle_rad)
-                            sin_a = math.sin(angle_rad)
-                            w_half = w / 2
-                            h_half = h / 2
+                    # Draw orientation arrow
+                    self.draw_orientation_arrow(
+                        vis_image, cx, cy, angle_rad, length=50, color=(0, 255, 0)
+                    )
 
-                            # Define rectangle corners relative to center
-                            corners = np.array(
-                                [
-                                    [-w_half, -h_half],
-                                    [w_half, -h_half],
-                                    [w_half, h_half],
-                                    [-w_half, h_half],
-                                ]
-                            )
+                    # Create label with class name and confidence
+                    label = f"{obj['class']}: {obj['conf']:.2f}"
+                    text_pos = (cx - 50, cy - 25)
 
-                            # Rotate
-                            rot_matrix = np.array([[cos_a, -sin_a], [sin_a, cos_a]])
-                            corners = corners @ rot_matrix.T
-
-                            # Translate
-                            corners[:, 0] += cx
-                            corners[:, 1] += cy
-
-                        # Draw green bounding box
-                        self.draw_obb_box(vis_image, corners, color=(0, 255, 0), thickness=1)
-
-                        # Draw green arrow showing orientation
-                        self.draw_orientation_arrow(
-                            vis_image, int(cx), int(cy), angle_rad, length=50, color=(0, 255, 0)
-                        )
-
-                        brick_info = list(BRICK_CLASSES.values())[class_id]
-                        trivial_name = brick_info['class']
-                        label = f"{trivial_name}: {confidence:.2f}"
-                        text_pos = (int(cx) - 50, int(cy) - 25)
-
-                        # Draw label in dark blue
-                        cv2.putText(
-                            vis_image,
-                            label,
-                            text_pos,
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.4,
-                            (139, 0, 0),
-                            1,
-                            cv2.LINE_AA,
-                        )
+                    # Draw label in dark blue
+                    cv2.putText(
+                        vis_image,
+                        label,
+                        text_pos,
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.4,
+                        (139, 0, 0),
+                        1,
+                        cv2.LINE_AA,
+                    )
 
                 # Display detection count
                 cv2.putText(
@@ -174,7 +161,7 @@ class OrientationVisualizer:
                 # Display instructions
                 cv2.putText(
                     vis_image,
-                    "Green arrows show detected orientation",
+                    "Green arrows show detected orientation (from PerceptionModule)",
                     (10, 60),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.5,
@@ -183,7 +170,7 @@ class OrientationVisualizer:
                     cv2.LINE_AA,
                 )
 
-                cv2.imshow('Brick Orientations', vis_image)
+                cv2.imshow('Perception Output', vis_image)
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q'):
                     break
@@ -195,7 +182,7 @@ class OrientationVisualizer:
 
 if __name__ == '__main__':
     try:
-        visualizer = OrientationVisualizer()
+        visualizer = PerceptionVisualizer()
         visualizer.run()
     except rospy.ROSInterruptException:
         pass
