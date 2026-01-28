@@ -278,13 +278,13 @@ class ObjectSpawner:
             rospy.logerr(f"Failed to spawn {object_name}: {e}")
             return None
 
-    def spawn_one_of_each(self, allowed_types=None):
+    def spawn_one_of_each(self, allowed_types=None, spawn_positions=None):
         """
-        Spawn exactly one instance of each object type.
-        This is the recommended default for comprehensive testing.
+        Spawn exactly one instance of each object type at predefined positions.
 
         Args:
             allowed_types (list, optional): List of allowed brick types. All types if None.
+            spawn_positions (dict, optional): Dict mapping brick_type to [x,y,z] spawn position.
 
         Returns:
             list: List of spawned object info dicts
@@ -296,7 +296,12 @@ class ObjectSpawner:
 
         spawned = []
         for brick_type in allowed_types:
-            obj_info = self.spawn_object(brick_type=brick_type)
+            # Use predefined position if available
+            position = None
+            if spawn_positions and brick_type in spawn_positions:
+                position = spawn_positions[brick_type]
+            
+            obj_info = self.spawn_object(brick_type=brick_type, position=position)
             if obj_info:
                 spawned.append(obj_info)
             rospy.sleep(0.3)  # Small delay between spawns

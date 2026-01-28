@@ -72,10 +72,45 @@ ik_early_exit_pos_err = 0.5
 
 # Object spawning
 auto_spawn_objects = False
-num_objects_to_spawn = 5
+num_objects_to_spawn = 11
 spawn_area_center = [0.80, 0.50]
 spawn_area_size = [0.30, 0.30]
-allowed_brick_types = ['X1-Y1-Z2', 'X1-Y2-Z2', 'X2-Y2-Z2']
+
+# Predefined spawn positions for each brick class (on source table)
+# Format: 'brick_type': [x, y, z] in world frame
+SPAWN_POSITIONS = {
+    'X1-Y1-Z2': [0.65, 0.25, 0.88],
+    'X1-Y2-Z1': [0.80, 0.25, 0.88],
+    'X1-Y2-Z2': [0.95, 0.25, 0.88],
+    'X1-Y2-Z2-CHAMFER': [0.65, 0.40, 0.88],
+    'X1-Y2-Z2-TWINFILLET': [0.80, 0.40, 0.88],
+    'X1-Y3-Z2': [0.95, 0.40, 0.88],
+    'X1-Y3-Z2-FILLET': [0.65, 0.55, 0.88],
+    'X1-Y4-Z1': [0.80, 0.55, 0.88],
+    'X1-Y4-Z2': [0.95, 0.55, 0.88],
+    'X2-Y2-Z2': [0.72, 0.70, 0.88],
+    'X2-Y2-Z2-FILLET': [0.88, 0.70, 0.88],
+}
+
+# Predefined target positions for each brick class (silhouette positions on final stand)
+# Format: 'brick_type': [x, y, z] in world frame
+# Final stand is on the opposite side of robot from pick area
+TARGET_POSITIONS = {
+    'X1-Y1-Z2': [0.25, 0.35, 0.89],      # Row 1, Col 1
+    'X1-Y2-Z1': [0.35, 0.35, 0.89],      # Row 1, Col 2
+    'X1-Y2-Z2': [0.25, 0.45, 0.89],      # Row 2, Col 1
+    'X1-Y2-Z2-CHAMFER': [0.35, 0.45, 0.89],  # Row 2, Col 2
+    'X1-Y2-Z2-TWINFILLET': [0.25, 0.55, 0.89],  # Row 3, Col 1
+    'X1-Y3-Z2': [0.35, 0.55, 0.89],      # Row 3, Col 2
+    'X1-Y3-Z2-FILLET': [0.25, 0.65, 0.89],  # Row 4, Col 1
+    'X1-Y4-Z1': [0.35, 0.65, 0.89],      # Row 4, Col 2
+    'X1-Y4-Z2': [0.20, 0.75, 0.89],      # Row 5, Col 1
+    'X2-Y2-Z2': [0.30, 0.75, 0.89],      # Row 5, Col 2
+    'X2-Y2-Z2-FILLET': [0.40, 0.75, 0.89],  # Row 5, Col 3
+}
+
+# Brick types that will be spawned - derived from TARGET_POSITIONS
+allowed_brick_types = list(TARGET_POSITIONS.keys())
 
 # Gripper type
 gripper = True

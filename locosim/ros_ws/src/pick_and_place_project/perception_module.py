@@ -273,6 +273,7 @@ class PerceptionModule:
             obj = {
                 'name': object_name,
                 'class': class_str,
+                'brick_type': final_name,  # Original brick type for target lookup
                 'position': filtered_pos,
                 'orientation': np.array([0.0, 0.0, qz, qw]),
                 'dimensions': dims,
@@ -457,5 +458,6 @@ class PerceptionModule:
                         ]
                     ),
                     'class': brick_class,
+                    'brick_type': brick_type,  # Original brick type for target lookup
                 }
                 self.ground_truth_objects.append(obj)
