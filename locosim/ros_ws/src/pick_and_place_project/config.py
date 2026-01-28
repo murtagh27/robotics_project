@@ -84,10 +84,5 @@ robotiq_gripper = False
 
 SLOW_FACTOR = 1.0
 
-# Aliases for compatibility with old config names
-home_joint_config = q0  # Alias for motion planner
-
-# Missing attributes from old config
-table_initial = {'position': source_table_pos.tolist(), 'size': [0.6, 0.4, 0.02]}
-table_final = {'position': target_table_pos.tolist(), 'size': [0.6, 0.4, 0.02]}
-camera_frame = 'camera_link'
+# Alias for compatibility
+home_joint_config = q0

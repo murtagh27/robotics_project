@@ -278,49 +278,10 @@ class MotionPlanner:
         
         return T
 
-    def _dh_transform_modified(self, theta, alpha, d, a):
-        """
-        Compute MODIFIED DH transformation matrix (as used by Universal Robots).
-        
-        Modified DH: T_i = Rx(alpha_{i-1}) * Tx(a_{i-1}) * Rz(theta_i) * Tz(d_i)
-        
-        Args:
-            theta: Joint angle
-            alpha: Link twist (alpha_{i-1})
-            d: Link offset
-            a: Link length (a_{i-1})
-
-        Returns:
-            4x4 homogeneous transformation matrix
-        """
-        ct = np.cos(theta)
-        st = np.sin(theta)
-        ca = np.cos(alpha)
-        sa = np.sin(alpha)
-
-        return np.array([
-            [ct,       -st,       0,      a],
-            [st*ca,    ct*ca,    -sa,    -sa*d],
-            [st*sa,    ct*sa,     ca,     ca*d],
-            [0,        0,         0,      1]
-        ])
-
     def _dh_transform(self, theta, alpha, d, a):
         """
         Compute STANDARD DH transformation matrix.
         T = Rz(θ) * Tz(d) * Tx(a) * Rx(α)
-        
-        NOTE: This is kept for the IK solver which uses standard DH.
-        For FK, use _dh_transform_modified instead.
-
-        Args:
-            theta: Joint angle
-            alpha: Link twist
-            d: Link offset
-            a: Link length
-
-        Returns:
-            4x4 homogeneous transformation matrix
         """
         ct = np.cos(theta)
         st = np.sin(theta)
@@ -333,10 +294,6 @@ class MotionPlanner:
             [0,   sa,     ca,    d],
             [0,   0,      0,     1]
         ])
-
-    def _almzero(self, x):
-        """Check if value is approximately zero."""
-        return np.abs(x) < 1e-7
 
     def ur5_inverse(self, p_target, R_target):
         """
@@ -2258,30 +2215,3 @@ class MotionPlanner:
         
         rospy.loginfo(f"IK: Found solution (deg): [{np.degrees(joints[0]):.1f}, {np.degrees(joints[1]):.1f}, {np.degrees(joints[2]):.1f}, {np.degrees(joints[3]):.1f}, {np.degrees(joints[4]):.1f}, {np.degrees(joints[5]):.1f}]")
         return joints
-
-    def _check_joint_limits(self, joints):
-        """Check if joint angles are within limits (with angle wrapping)"""
-        for i, (q, lower, upper) in enumerate(zip(joints, self.joint_limits_lower, self.joint_limits_upper)):
-            # Normalize angle to [-pi, pi] for comparison
-            q_wrapped = np.arctan2(np.sin(q), np.cos(q))
-            
-            # Check if wrapped angle is within limits
-            if q_wrapped < lower or q_wrapped > upper:
-                rospy.logwarn(f"Joint {i+1} out of limits: {np.degrees(q):.1f}° (wrapped: {np.degrees(q_wrapped):.1f}°, limits: {np.degrees(lower):.1f}° to {np.degrees(upper):.1f}°)")
-                return False
-        return True
-
-    def compute_ik(self, target_pose, initial_guess=None):
-        """
-        IK computation using simple geometric approach
-        """
-        return self.simple_ik(target_pose[:3])
-
-    def move_to_pose(self, target_pos, target_orient, controller, duration=1.5):
-        """
-        Move to Cartesian pose using IK
-        """
-        joints = self.simple_ik(target_pos, gripper_down=True)
-        if joints is None:
-            return False
-        return self.move_to_joints(joints, controller, duration)
