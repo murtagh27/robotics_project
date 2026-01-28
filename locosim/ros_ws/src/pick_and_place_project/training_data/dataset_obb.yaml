@@ -1,0 +1,20 @@
+# YOLO OBB Dataset Configuration
+path: training_data
+
+train: images
+val: images
+
+nc: 11
+
+names:
+  0: X1-Y1-Z2
+  1: X1-Y2-Z1
+  2: X1-Y2-Z2
+  3: X1-Y2-Z2-CHAMFER
+  4: X1-Y2-Z2-TWINFILLET
+  5: X1-Y3-Z2
+  6: X1-Y3-Z2-FILLET
+  7: X1-Y4-Z1
+  8: X1-Y4-Z2
+  9: X2-Y2-Z2
+  10: X2-Y2-Z2-FILLET
