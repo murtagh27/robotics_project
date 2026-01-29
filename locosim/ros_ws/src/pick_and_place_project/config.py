@@ -72,10 +72,46 @@ ik_early_exit_pos_err = 0.5
 
 # Object spawning
 auto_spawn_objects = False
-num_objects_to_spawn = 5
+num_objects_to_spawn = 11
 spawn_area_center = [0.80, 0.50]
 spawn_area_size = [0.30, 0.30]
-allowed_brick_types = ['X1-Y1-Z2', 'X1-Y2-Z2', 'X2-Y2-Z2']
+
+# Predefined spawn positions for each brick class (on source table - PICK area)
+# Format: 'brick_type': [x, y, z] in world frame
+# These are on the +X side of robot (x > 0.5)
+SPAWN_POSITIONS = {
+    'X1-Y1-Z2': [0.65, 0.15, 0.88],
+    'X1-Y2-Z1': [0.80, 0.15, 0.88],
+    'X1-Y2-Z2': [0.95, 0.15, 0.88],
+    'X1-Y2-Z2-CHAMFER': [0.65, 0.30, 0.88],
+    'X1-Y2-Z2-TWINFILLET': [0.80, 0.30, 0.88],
+    'X1-Y3-Z2': [0.95, 0.30, 0.88],
+    'X1-Y3-Z2-FILLET': [0.65, 0.45, 0.88],
+    'X1-Y4-Z1': [0.80, 0.45, 0.88],
+    'X1-Y4-Z2': [0.95, 0.45, 0.88],
+    'X2-Y2-Z2': [0.72, 0.60, 0.88],
+    'X2-Y2-Z2-FILLET': [0.88, 0.60, 0.88],
+}
+
+# Predefined target positions for each brick class (silhouette positions - PLACE area)
+# Format: 'brick_type': [x, y, z] in world frame
+# Place area is at higher Y values (y=0.70-1.00), same X range as pick area
+TARGET_POSITIONS = {
+    'X1-Y1-Z2': [0.55, 0.70, 0.89],      # Row 1, Col 1
+    'X1-Y2-Z1': [0.70, 0.70, 0.89],      # Row 1, Col 2
+    'X1-Y2-Z2': [0.85, 0.70, 0.89],      # Row 1, Col 3
+    'X1-Y2-Z2-CHAMFER': [0.55, 0.80, 0.89],  # Row 2, Col 1
+    'X1-Y2-Z2-TWINFILLET': [0.70, 0.80, 0.89],  # Row 2, Col 2
+    'X1-Y3-Z2': [0.85, 0.80, 0.89],      # Row 2, Col 3
+    'X1-Y3-Z2-FILLET': [0.55, 0.90, 0.89],  # Row 3, Col 1
+    'X1-Y4-Z1': [0.70, 0.90, 0.89],      # Row 3, Col 2
+    'X1-Y4-Z2': [0.85, 0.90, 0.89],      # Row 3, Col 3
+    'X2-Y2-Z2': [0.60, 1.00, 0.89],      # Row 4, Col 1
+    'X2-Y2-Z2-FILLET': [0.75, 1.00, 0.89],  # Row 4, Col 2
+}
+
+# Brick types that will be spawned - derived from TARGET_POSITIONS
+allowed_brick_types = list(TARGET_POSITIONS.keys())
 
 # Gripper type
 gripper = True

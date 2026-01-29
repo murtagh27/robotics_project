@@ -16,28 +16,51 @@ RETRY_OFFSET = 0.01  # meters - offset for retry attempts
 
 
 class SlotManager:
-    """Manages placement grid slots organized by brick class"""
+    """
+    Manages target positions for placing bricks by class.
+    Uses predefined silhouette positions from config if available,
+    falls back to dynamic grid allocation otherwise.
+    """
     
     def __init__(self, config):
         self.config = config
         
-        # Placement area bounds (world frame)
+        # Try to load predefined target positions from config
+        self.predefined_positions = getattr(config, 'TARGET_POSITIONS', {})
+        if self.predefined_positions:
+            rospy.loginfo(f"SlotManager: Using {len(self.predefined_positions)} predefined silhouette positions")
+        else:
+            rospy.loginfo("SlotManager: No predefined positions, using dynamic grid")
+        
+        # Fallback: Placement area bounds (world frame) for dynamic allocation
         self.x_min = 0.20
         self.x_max = 0.40
         self.y_min = 0.35
         self.y_max = 0.65
         self.z_height = 0.89
         
-        # Slot tracking
+        # Track which slots are used (for classes without predefined positions)
         self.slots_per_class = defaultdict(int)
+        self.used_positions = set()  # Track which predefined positions are used
         
-        # Grid config
+        # Grid config for fallback
         self.slots_per_row = 3
         self.brick_spacing_x = (self.x_max - self.x_min) / max(self.slots_per_row - 1, 1)
         self.brick_spacing_y = 0.10
         
     def get_slot_for_class(self, brick_class):
-        """Get next available slot position for this brick class"""
+        """
+        Get target position for this brick class.
+        Uses predefined silhouette position if available, otherwise allocates from grid.
+        """
+        # Check for predefined position first
+        if brick_class in self.predefined_positions:
+            pos = self.predefined_positions[brick_class]
+            rospy.loginfo(f"  Using predefined position for {brick_class}: {pos}")
+            return np.array(pos)
+        
+        # Fallback: dynamic grid allocation
+        rospy.logwarn(f"  No predefined position for {brick_class}, using dynamic grid")
         slot_idx = self.slots_per_class[brick_class]
         self.slots_per_class[brick_class] += 1
         
@@ -147,11 +170,12 @@ class TaskScheduler:
 
         for i, obj in enumerate(objects):
             obj_class = obj.get('class', 'unknown')
+            brick_type = obj.get('brick_type', obj_class)  # Use brick_type for target lookup
 
-            # Use SlotManager to get target position for this brick class
-            target_pos = self.slot_manager.get_slot_for_class(obj_class)
+            # Use SlotManager to get target position for this brick type
+            target_pos = self.slot_manager.get_slot_for_class(brick_type)
 
-            task_sequence.append({'object': obj, 'target': target_pos, 'class': obj_class})
+            task_sequence.append({'object': obj, 'target': target_pos, 'class': obj_class, 'brick_type': brick_type})
             
             # Collect positions for visualization
             detected_positions.append(obj['position'])

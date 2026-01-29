@@ -298,7 +298,7 @@ class PapaController(BaseControllerFixed):
         Spawn objects using the object spawner.
 
         Args:
-            num_objects (int, optional): Number of objects to spawn. Uses config default if None.
+            num_objects (int, optional): Number of objects to spawn. If None, spawns one of each type.
             brick_types (list, optional): List of allowed brick types. Uses config default if None.
         
         Returns:
@@ -311,16 +311,15 @@ class PapaController(BaseControllerFixed):
         # Get brick types to spawn from
         if brick_types is None:
             brick_types = self.config.allowed_brick_types
-        
-        # Get number of objects to spawn
-        if num_objects is None:
-            num_objects = getattr(self.config, 'num_objects_to_spawn', 5)
 
-        # Spawn random objects (randomly chosen from allowed types)
-        rospy.loginfo(f"Spawning {num_objects} objects from types: {brick_types}")
-        spawned_objects = self.object_spawner.spawn_random_objects(
-            num_objects=num_objects,
+        # Get predefined spawn positions from config
+        spawn_positions = getattr(self.config, 'SPAWN_POSITIONS', None)
+
+        # Spawn one of each type at predefined positions
+        rospy.loginfo(f"Spawning one of each brick type ({len(brick_types)} total)")
+        spawned_objects = self.object_spawner.spawn_one_of_each(
             allowed_types=brick_types,
+            spawn_positions=spawn_positions,
         )
 
         rospy.loginfo(f"Successfully spawned {len(spawned_objects)} objects")
