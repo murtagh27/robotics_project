@@ -1269,6 +1269,9 @@ class MotionPlanner:
         controller.send_gripper_command(self.config.gripper_open_pos)
         rospy.sleep(1.5)
 
+        # Get current joint state
+        current_joints = controller.q.copy()
+
         # Get safe transit height
         safe_z = getattr(self.config, 'safe_transit_height', 1.10)
         robot_base_x = 0.5
