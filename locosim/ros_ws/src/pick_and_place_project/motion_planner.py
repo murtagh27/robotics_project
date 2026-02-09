@@ -126,7 +126,7 @@ class MotionPlanner:
         # Set random seed for reproducibility if configured
         if hasattr(config, 'seed') and config.seed is not None:
             np.random.seed(config.seed)
-            rospy.loginfo(f"Random seed set to {config.seed} for reproducibility")
+            rospy.logdebug(f"Random seed set to {config.seed} for reproducibility")
 
         # Pre-defined joint configurations
         self.home_joints = np.array(config.home_joint_config)
@@ -179,7 +179,7 @@ class MotionPlanner:
         self.collision_checker = CollisionChecker(config)
         self.enable_collision_checking = False  # Disabled - only checks targets, not paths
 
-        rospy.loginfo("Motion planner initialized (analytical IK mode)")
+        rospy.logdebug("Motion planner initialized (analytical IK mode)")
 
     def urdf_fk(self, q):
         """
@@ -373,8 +373,8 @@ class MotionPlanner:
         p06 = T06[:3, 3]
         R06 = T06[:3, :3]
 
-        rospy.loginfo(f"URDF IK: target_pos={p_target}")
-        rospy.loginfo(f"URDF IK: p06 (after undoing base/fixed)={p06}")
+        rospy.logdebug(f"URDF IK: target_pos={p_target}")
+        rospy.logdebug(f"URDF IK: p06 (after undoing base/fixed)={p06}")
 
         # Compute wrist center (joint 5 origin)
         # T56 = Txyz(0, 0.0996, 0) @ Rz(π) @ Ry(π) @ Rx(π/2) @ Rz(q6)
@@ -436,7 +436,7 @@ class MotionPlanner:
         # Let's use an approximation: the wrist center for IK purposes is p_wrist5
         p_wrist = p_wrist5
 
-        rospy.loginfo(f"URDF IK: wrist_center={p_wrist}")
+        rospy.logdebug(f"URDF IK: wrist_center={p_wrist}")
 
         solutions = []
 
@@ -596,7 +596,7 @@ class MotionPlanner:
         Th = np.array(final_solutions[:8]).T
 
         valid_count = sum(1 for s in final_solutions[:8] if not np.isnan(s[0]))
-        rospy.loginfo(f"URDF IK: Found {valid_count} valid solutions")
+        rospy.logdebug(f"URDF IK: Found {valid_count} valid solutions")
 
         return Th
 
@@ -666,8 +666,8 @@ class MotionPlanner:
 
             # Skip solutions with NaN
             if np.any(np.isnan(sol)):
-                rospy.loginfo(f"  Sol {i}: REJECTED - contains NaN")
-                rospy.loginfo(f"    Joints: {sol}")
+                rospy.logdebug(f"  Sol {i}: REJECTED - contains NaN")
+                rospy.logdebug(f"    Joints: {sol}")
                 continue
 
             # NOTE: Joint limit checking disabled - IK solutions are already valid
@@ -683,7 +683,7 @@ class MotionPlanner:
             max_single_joint = np.max(joint_deltas)
 
             if max_single_joint > MAX_SINGLE_JOINT_MOVE:
-                rospy.loginfo(
+                rospy.logdebug(
                     f"  Sol {i}: REJECTED - requires {np.degrees(max_single_joint):.1f}° on single joint (max {np.degrees(MAX_SINGLE_JOINT_MOVE):.1f}°)"
                 )
                 continue
@@ -692,7 +692,7 @@ class MotionPlanner:
             # Use wrapped distances
             distance = np.linalg.norm(joint_deltas)
 
-            rospy.loginfo(
+            rospy.logdebug(
                 f"  Sol {i}: ACCEPTED - dist={distance:.2f}, max_joint={np.degrees(max_single_joint):.1f}°"
             )
 
@@ -770,7 +770,7 @@ class MotionPlanner:
         # Apply yaw rotation to base gripper-down rotation
         R = Rz @ R_base
 
-        rospy.loginfo(
+        rospy.logdebug(
             f"Gripper orientation: object_yaw={np.degrees(object_yaw):.1f}°, best_angle={np.degrees(best_angle):.1f}°"
         )
 
@@ -820,7 +820,7 @@ class MotionPlanner:
             # DO NOT wrap here - keep continuous to avoid controller confusion
             waypoints.append(waypoint)
 
-        rospy.loginfo(
+        rospy.logdebug(
             f"Generated {len(waypoints)} waypoints (max step: {max_step_deg}°, total: {max_movement_deg:.1f}°)"
         )
         return waypoints
@@ -835,9 +835,9 @@ class MotionPlanner:
             duration: Movement duration in seconds
             target_world_pos: Optional target position in world frame (for verification)
         """
-        rospy.loginfo(f"\n{'='*60}")
-        rospy.loginfo(f"STARTING MOVEMENT (duration={duration}s)")
-        rospy.loginfo(f"{'='*60}")
+        rospy.logdebug(f"\n{'='*60}")
+        rospy.logdebug(f"STARTING MOVEMENT (duration={duration}s)")
+        rospy.logdebug(f"{'='*60}")
 
         # Get current joint state
         current_joints, _ = controller.get_current_joint_state()
@@ -863,22 +863,22 @@ class MotionPlanner:
             target_continuous[i] = current_joints[i] + diff
             interpolation_delta[i] = diff
 
-        rospy.loginfo(
+        rospy.logdebug(
             f"Current joints (rad): {np.array2string(current_joints[:6], precision=3, suppress_small=True)}"
         )
-        rospy.loginfo(
+        rospy.logdebug(
             f"Current joints (deg): {np.array2string(np.degrees(current_joints[:6]), precision=1, suppress_small=True)}"
         )
-        rospy.loginfo(
+        rospy.logdebug(
             f"Target joints (raw, rad):  {np.array2string(target_joints[:6] if len(target_joints) >= 6 else target_joints, precision=3, suppress_small=True)}"
         )
-        rospy.loginfo(
+        rospy.logdebug(
             f"Target joints (continuous, rad):  {np.array2string(target_continuous, precision=3, suppress_small=True)}"
         )
-        rospy.loginfo(
+        rospy.logdebug(
             f"Target joints (continuous, deg):  {np.array2string(np.degrees(target_continuous), precision=1, suppress_small=True)}"
         )
-        rospy.loginfo(
+        rospy.logdebug(
             f"Interpolation delta (deg): {np.array2string(np.degrees(interpolation_delta), precision=1, suppress_small=True)}"
         )
 
@@ -907,22 +907,22 @@ class MotionPlanner:
             target_ee_pos = current_ee_pos  # Will be updated after motion
             target_ee_world = current_ee_world
 
-        rospy.loginfo(
+        rospy.logdebug(
             f"\nCurrent EE (base_link): {np.array2string(current_ee_pos, precision=3, suppress_small=True)}"
         )
-        rospy.loginfo(
+        rospy.logdebug(
             f"Current EE (world):     {np.array2string(current_ee_world, precision=3, suppress_small=True)}"
         )
         if target_world_pos is not None:
-            rospy.loginfo(
+            rospy.logdebug(
                 f"Target EE (base_link):  {np.array2string(target_ee_pos, precision=3, suppress_small=True)}"
             )
-            rospy.loginfo(
+            rospy.logdebug(
                 f"Target EE (world):      {np.array2string(target_ee_world, precision=3, suppress_small=True)}"
             )
             ee_distance = np.linalg.norm(target_ee_pos - current_ee_pos)
-            rospy.loginfo(f"EE distance to travel: {ee_distance:.4f} m ({ee_distance*1000:.1f} mm)")
-        rospy.loginfo(f"{'='*60}\n")
+            rospy.logdebug(f"EE distance to travel: {ee_distance:.4f} m ({ee_distance*1000:.1f} mm)")
+        rospy.logdebug(f"{'='*60}\n")
 
         # Pad target joints to 8 if only 6 provided (add gripper)
         if len(target_joints) == 6:
@@ -963,9 +963,9 @@ class MotionPlanner:
                 f"   Original velocity: {max_velocity:.3f} rad/s (limit: {SAFE_VELOCITY_LIMIT} rad/s)"
             )
             max_velocity = np.max(np.abs(interpolation_delta_full[:6] / duration))
-            rospy.loginfo(f"   New velocity: {max_velocity:.3f} rad/s")
+            rospy.logdebug(f"   New velocity: {max_velocity:.3f} rad/s")
         else:
-            rospy.loginfo(
+            rospy.logdebug(
                 f"✓ Velocity OK: {max_velocity:.3f} rad/s (limit: {SAFE_VELOCITY_LIMIT} rad/s)"
             )
 
@@ -976,7 +976,7 @@ class MotionPlanner:
         rate = rospy.Rate(CONTROL_RATE)
         steps = int(duration * CONTROL_RATE)
 
-        rospy.loginfo(f"Control loop: {steps} steps at {CONTROL_RATE} Hz for {duration}s duration")
+        rospy.logdebug(f"Control loop: {steps} steps at {CONTROL_RATE} Hz for {duration}s duration")
         commands_sent = 0
 
         for i in range(steps + 1):
@@ -1025,10 +1025,10 @@ class MotionPlanner:
 
                 progress = i / steps * 100
 
-                rospy.loginfo(
+                rospy.logdebug(
                     f"Progress: {progress:.0f}% | Joint Δ: {joint_movement:.4f} rad | EE Δ: {ee_movement*1000:.1f} mm"
                 )
-                rospy.loginfo(
+                rospy.logdebug(
                     f"  Computed EE (FK): {np.array2string(actual_ee_pos_fk, precision=3, suppress_small=True)}"
                 )
 
@@ -1050,7 +1050,7 @@ class MotionPlanner:
 
             rate.sleep()
 
-        rospy.loginfo(f"✓ Control loop completed: {commands_sent} commands sent")
+        rospy.logdebug(f"✓ Control loop completed: {commands_sent} commands sent")
 
         # Final verification using TF (ground truth)
         final_joints, _ = controller.get_current_joint_state()
@@ -1075,26 +1075,26 @@ class MotionPlanner:
             final_ee_error = 0.0
             ee_distance = total_ee_movement
 
-        rospy.loginfo(f"\n{'='*60}")
-        rospy.loginfo("MOVEMENT COMPLETE - Final Status:")
-        rospy.loginfo(f"{'='*60}")
-        rospy.loginfo(f"Joint space:")
-        rospy.loginfo(
+        rospy.logdebug(f"\n{'='*60}")
+        rospy.logdebug("MOVEMENT COMPLETE - Final Status:")
+        rospy.logdebug(f"{'='*60}")
+        rospy.logdebug(f"Joint space:")
+        rospy.logdebug(
             f"  Total movement: {total_joint_movement:.4f} rad (expected {expected_joint_total:.4f})"
         )
-        rospy.loginfo(
+        rospy.logdebug(
             f"  Final error: {final_joint_error:.4f} rad ({np.degrees(final_joint_error):.1f} deg)"
         )
-        rospy.loginfo(f"Cartesian space (TF ground truth):")
-        rospy.loginfo(f"  Total EE movement: {total_ee_movement*1000:.1f} mm")
-        rospy.loginfo(
+        rospy.logdebug(f"Cartesian space (TF ground truth):")
+        rospy.logdebug(f"  Total EE movement: {total_ee_movement*1000:.1f} mm")
+        rospy.logdebug(
             f"  Final EE position (base_link): {np.array2string(final_ee_pos, precision=3, suppress_small=True)}"
         )
         if target_world_pos is not None:
-            rospy.loginfo(
+            rospy.logdebug(
                 f"  Target position (base_link):   {np.array2string(target_base_link, precision=3, suppress_small=True)}"
             )
-            rospy.loginfo(f"  Final EE error: {final_ee_error*1000:.1f} mm")
+            rospy.logdebug(f"  Final EE error: {final_ee_error*1000:.1f} mm")
 
         # Publish final TF
         self._publish_ee_tf(controller, final_ee_pos, "current_ee")
@@ -1103,13 +1103,13 @@ class MotionPlanner:
             rospy.logerr("❌ MOVEMENT FAILED - Robot did not move!")
             rospy.logerr(f"   Check if /command topic is connected")
             rospy.logerr(f"   Check if Gazebo controllers are running")
-            rospy.loginfo(f"{'='*60}\n")
+            rospy.logdebug(f"{'='*60}\n")
             return False
         elif target_world_pos is not None and final_ee_error > 0.05:  # 50mm error
             rospy.logerr(f"❌ LARGE EE POSITION ERROR: {final_ee_error*1000:.1f} mm")
             rospy.logerr("   End-effector did not reach target!")
             rospy.logerr("   Possible IK solution error or tracking issue")
-            rospy.loginfo(f"{'='*60}\n")
+            rospy.logdebug(f"{'='*60}\n")
             return False
         elif final_joint_error > 0.1:  # 0.1 rad = ~5.7 degrees
             rospy.logwarn(
@@ -1117,10 +1117,10 @@ class MotionPlanner:
             )
             if target_world_pos is not None:
                 rospy.logwarn(f"   EE error: {final_ee_error*1000:.1f} mm")
-            rospy.loginfo(f"{'='*60}\n")
+            rospy.logdebug(f"{'='*60}\n")
         else:
-            rospy.loginfo("✓ Movement successful - Target reached!")
-            rospy.loginfo(f"{'='*60}\n")
+            rospy.logdebug("✓ Movement successful - Target reached!")
+            rospy.logdebug(f"{'='*60}\n")
 
         return True
 
@@ -1140,26 +1140,26 @@ class MotionPlanner:
         # Generate waypoints
         waypoints = self.generate_waypoints(current_joints, target_joints, max_step_deg)
 
-        rospy.loginfo(f"\n{'='*70}")
-        rospy.loginfo(f"MULTI-STEP MOVEMENT: {len(waypoints)} waypoint(s)")
-        rospy.loginfo(f"  Duration per step: {duration}s")
-        rospy.loginfo(f"  Max step size: {max_step_deg}°")
-        rospy.loginfo(f"{'='*70}")
+        rospy.logdebug(f"\n{'='*70}")
+        rospy.logdebug(f"MULTI-STEP MOVEMENT: {len(waypoints)} waypoint(s)")
+        rospy.logdebug(f"  Duration per step: {duration}s")
+        rospy.logdebug(f"  Max step size: {max_step_deg}°")
+        rospy.logdebug(f"{'='*70}")
 
         # Execute each segment
         for i, waypoint in enumerate(waypoints):
-            rospy.loginfo(f"\n>>> Executing waypoint {i+1}/{len(waypoints)} <<<")
+            rospy.logdebug(f"\n>>> Executing waypoint {i+1}/{len(waypoints)} <<<")
             success = self.move_to_joints_direct(waypoint, controller, duration)
             if not success:
                 rospy.logerr(f"Failed at waypoint {i+1}/{len(waypoints)}")
                 return False
             if i < len(waypoints) - 1:
-                rospy.loginfo("Pausing 0.1s between waypoints...")
+                rospy.logdebug("Pausing 0.1s between waypoints...")
                 rospy.sleep(0.1)
 
-        rospy.loginfo(f"\n{'='*70}")
-        rospy.loginfo(f"MULTI-STEP MOVEMENT COMPLETE")
-        rospy.loginfo(f"{'='*70}\n")
+        rospy.logdebug(f"\n{'='*70}")
+        rospy.logdebug(f"MULTI-STEP MOVEMENT COMPLETE")
+        rospy.logdebug(f"{'='*70}\n")
         return True
 
     def move_to_joints_with_target(
@@ -1181,18 +1181,18 @@ class MotionPlanner:
         # Generate waypoints
         waypoints = self.generate_waypoints(current_joints, target_joints, max_step_deg)
 
-        rospy.loginfo(f"\n{'='*70}")
-        rospy.loginfo(f"MULTI-STEP MOVEMENT: {len(waypoints)} waypoint(s)")
-        rospy.loginfo(
+        rospy.logdebug(f"\n{'='*70}")
+        rospy.logdebug(f"MULTI-STEP MOVEMENT: {len(waypoints)} waypoint(s)")
+        rospy.logdebug(
             f"  Target world position: [{target_world_pos[0]:.3f}, {target_world_pos[1]:.3f}, {target_world_pos[2]:.3f}]"
         )
-        rospy.loginfo(f"  Duration per step: {duration}s")
-        rospy.loginfo(f"  Max step size: {max_step_deg}°")
-        rospy.loginfo(f"{'='*70}")
+        rospy.logdebug(f"  Duration per step: {duration}s")
+        rospy.logdebug(f"  Max step size: {max_step_deg}°")
+        rospy.logdebug(f"{'='*70}")
 
         # Execute each segment, only pass target_world_pos for the LAST waypoint
         for i, waypoint in enumerate(waypoints):
-            rospy.loginfo(f"\n>>> Executing waypoint {i+1}/{len(waypoints)} <<<")
+            rospy.logdebug(f"\n>>> Executing waypoint {i+1}/{len(waypoints)} <<<")
             is_final = i == len(waypoints) - 1
             wp_target = target_world_pos if is_final else None
             success = self.move_to_joints_direct(
@@ -1202,12 +1202,12 @@ class MotionPlanner:
                 rospy.logerr(f"Failed at waypoint {i+1}/{len(waypoints)}")
                 return False
             if i < len(waypoints) - 1:
-                rospy.loginfo("Pausing 0.1s between waypoints...")
+                rospy.logdebug("Pausing 0.1s between waypoints...")
                 rospy.sleep(0.1)
 
-        rospy.loginfo(f"\n{'='*70}")
-        rospy.loginfo(f"MULTI-STEP MOVEMENT COMPLETE")
-        rospy.loginfo(f"{'='*70}\n")
+        rospy.logdebug(f"\n{'='*70}")
+        rospy.logdebug(f"MULTI-STEP MOVEMENT COMPLETE")
+        rospy.logdebug(f"{'='*70}\n")
         return True
 
     def _get_actual_ee_position(self):
@@ -1305,7 +1305,7 @@ class MotionPlanner:
             object_orientation: Optional object orientation as quaternion [x, y, z, w]
             object_class: Optional object class (e.g. 'X1-Y2-Z2') for size-based grip
         """
-        rospy.loginfo(f"PICK: {object_pos}, class={object_class}")
+        rospy.logdebug(f"PICK: {object_pos}, class={object_class}")
 
         # Extract yaw from quaternion
         object_yaw = None
@@ -1338,7 +1338,7 @@ class MotionPlanner:
                 return False
 
         # Open gripper first
-        rospy.loginfo("  Opening gripper...")
+        rospy.logdebug("  Opening gripper...")
         controller.send_gripper_command(self.config.gripper_open_pos)
         rospy.sleep(1.5)
 
@@ -1405,7 +1405,7 @@ class MotionPlanner:
                     min_grasp_height = obj_height / 2.0 + 0.02
                     if grasp_height_offset < min_grasp_height:
                         grasp_height_offset = min_grasp_height
-                        rospy.loginfo(
+                        rospy.logdebug(
                             f"  Adjusted grasp height to {grasp_height_offset*100:.1f}cm for {obj_height*100:.1f}cm tall object"
                         )
             except ImportError:
@@ -1435,13 +1435,13 @@ class MotionPlanner:
                 diff = wrap_to_pi(target_joints[i] - current_joints[i])
                 deltas.append(abs(np.degrees(diff)))
             max_delta = max(deltas)
-            rospy.loginfo(
+            rospy.logdebug(
                 f"    Joint deltas (deg): [{', '.join([f'{d:.0f}' for d in deltas])}], max={max_delta:.0f}°"
             )
             return max_delta < max_single_joint_deg, max_delta, deltas
 
         # Step 1: Safe transit height
-        rospy.loginfo(f"  Step 1: Transit height")
+        rospy.logdebug(f"  Step 1: Transit height")
         safe_joints = self.simple_ik(safe_transit_pos, gripper_down=True, object_yaw=object_yaw)
         if safe_joints is None:
             rospy.logerr("Failed to compute safe transit IK")
@@ -1461,7 +1461,7 @@ class MotionPlanner:
         current_joints, _ = controller.get_current_joint_state()
 
         # Step 2: Approach
-        rospy.loginfo(f"  Step 2: Approach")
+        rospy.logdebug(f"  Step 2: Approach")
         approach_joints = self.simple_ik(approach_pos, gripper_down=True, object_yaw=object_yaw)
         if approach_joints is None:
             rospy.logerr("Failed to compute approach IK")
@@ -1478,7 +1478,7 @@ class MotionPlanner:
         current_joints, _ = controller.get_current_joint_state()
 
         # Step 3: Grasp position
-        rospy.loginfo(f"  Step 3: Grasp")
+        rospy.logdebug(f"  Step 3: Grasp")
         grasp_joints = self.simple_ik(grasp_pos, gripper_down=True, object_yaw=object_yaw)
         if grasp_joints is None:
             rospy.logerr("Failed to compute grasp IK")
@@ -1528,7 +1528,7 @@ class MotionPlanner:
                     else:
                         gripper_close = -0.4
 
-                    rospy.loginfo(
+                    rospy.logdebug(
                         f"  Adjusted gripper close to {gripper_close:.2f} rad for object size"
                     )
                 else:
@@ -1538,7 +1538,7 @@ class MotionPlanner:
             except ImportError:
                 rospy.logwarn("  Could not import brick_classes, using default gripper close")
 
-        rospy.loginfo(f"  Closing gripper...")
+        rospy.logdebug(f"  Closing gripper...")
         controller.send_gripper_command(gripper_close)
         rospy.sleep(2.5)
 
@@ -1551,13 +1551,13 @@ class MotionPlanner:
 
         commanded_close = self.config.gripper_close_pos
         gripper_error = abs(gripper_avg - commanded_close)
-        rospy.loginfo(f"  Grasp check: error={gripper_error:.3f} rad")
+        rospy.logdebug(f"  Grasp check: error={gripper_error:.3f} rad")
 
         # Step 4: Lift
-        rospy.loginfo(f"  Step 4: Lifting")
+        rospy.logdebug(f"  Step 4: Lifting")
         self.move_to_joints(safe_joints, controller, duration=1.5)
 
-        rospy.loginfo("Pick complete")
+        rospy.logdebug("Pick complete")
         return True
 
     def place_object(self, target_pos, controller):
@@ -1569,7 +1569,7 @@ class MotionPlanner:
             target_pos: Target position [x, y, z]
             controller: Controller instance
         """
-        rospy.loginfo(f"PLACE: {target_pos}")
+        rospy.logdebug(f"PLACE: {target_pos}")
 
         current_joints, _ = controller.get_current_joint_state()
         current_ee_pos = self.urdf_fk(current_joints[:6])
@@ -1606,13 +1606,13 @@ class MotionPlanner:
             [target_pos[0], target_pos[1], target_pos[2] + self.config.place_height]
         )
 
-        rospy.loginfo(
+        rospy.logdebug(
             f"Safe transit: {np.array2string(safe_transit_pos, precision=3, suppress_small=True)} (z={safe_z})"
         )
-        rospy.loginfo(
+        rospy.logdebug(
             f"Place approach position: {np.array2string(place_approach_pos, precision=3, suppress_small=True)} (target + {self.config.approach_height:.3f}m)"
         )
-        rospy.loginfo(
+        rospy.logdebug(
             f"Place position: {np.array2string(place_pos, precision=3, suppress_small=True)} (target + {self.config.place_height:.3f}m)"
         )
 
@@ -1631,7 +1631,7 @@ class MotionPlanner:
         current_ee_pos = self.urdf_fk(current_joints[:6])
         current_ee_world_x = current_ee_pos[0] + robot_base_x
         current_ee_world_y = current_ee_pos[1] + robot_base_y
-        rospy.loginfo(
+        rospy.logdebug(
             f"  Current EE world position: x={current_ee_world_x:.2f}, y={current_ee_world_y:.2f}"
         )
 
@@ -1643,9 +1643,9 @@ class MotionPlanner:
             # Only need transition if current EE is on +X side
             if current_ee_world_x > robot_base_x + 0.05:  # EE is on +X side
                 needs_transition = True
-                rospy.loginfo("  EE on +X side, target on -X side - using arc transition path")
+                rospy.logdebug("  EE on +X side, target on -X side - using arc transition path")
             else:
-                rospy.loginfo("  EE already on -X side, no transition needed")
+                rospy.logdebug("  EE already on -X side, no transition needed")
 
         if needs_transition:
             # DYNAMIC ARC TRANSITION: Only 2 waypoints that adapt to target position
@@ -1662,7 +1662,7 @@ class MotionPlanner:
             # X is midpoint between current and target
             mid_x = (current_ee_world_x + target_pos[0]) / 2.0
             arc_wp1 = np.array([mid_x, arc_y, safe_z])
-            rospy.loginfo(f"  Step 0a: Dynamic arc waypoint 1: {arc_wp1}")
+            rospy.logdebug(f"  Step 0a: Dynamic arc waypoint 1: {arc_wp1}")
             arc_joints1 = self.simple_ik(arc_wp1, gripper_down=True)
             if arc_joints1 is not None:
                 arc_dur = getattr(self.config, 'arc_move_duration', 2.0)
@@ -1670,7 +1670,7 @@ class MotionPlanner:
 
             # Waypoint 2: At target X, slightly above target Y (smooth transition to safe_transit)
             arc_wp2 = np.array([target_pos[0], target_y + 0.08, safe_z])  # Only 8cm above target Y
-            rospy.loginfo(f"  Step 0b: Dynamic arc waypoint 2: {arc_wp2}")
+            rospy.logdebug(f"  Step 0b: Dynamic arc waypoint 2: {arc_wp2}")
             arc_joints2 = self.simple_ik(arc_wp2, gripper_down=True)
             if arc_joints2 is not None:
                 self.move_to_joints(arc_joints2, controller, duration=arc_dur)
@@ -1678,7 +1678,7 @@ class MotionPlanner:
                 rospy.logwarn("  Could not reach arc waypoint 2, proceeding to target")
 
         # STEP 1: Move to safe transit height above target (avoids collisions)
-        rospy.loginfo(f"  Step 1: Moving to safe transit height: {safe_transit_pos}")
+        rospy.logdebug(f"  Step 1: Moving to safe transit height: {safe_transit_pos}")
         safe_joints = self.simple_ik(safe_transit_pos, gripper_down=True)
         if safe_joints is None:
             rospy.logerr("Failed to compute safe transit IK")
@@ -1688,7 +1688,7 @@ class MotionPlanner:
         )
 
         # STEP 2: Move down to place approach
-        rospy.loginfo(f"  Step 2: Moving to place approach: {place_approach_pos}")
+        rospy.logdebug(f"  Step 2: Moving to place approach: {place_approach_pos}")
         place_approach_joints = self.simple_ik(place_approach_pos, gripper_down=True)
         if place_approach_joints is None:
             rospy.logerr("Failed to compute place approach IK")
@@ -1700,7 +1700,7 @@ class MotionPlanner:
         )
 
         # STEP 3: Move down to place
-        rospy.loginfo(f"  Step 3: Moving down to place: {place_pos}")
+        rospy.logdebug(f"  Step 3: Moving down to place: {place_pos}")
         place_joints = self.simple_ik(place_pos, gripper_down=True)
         if place_joints is None:
             rospy.logerr("Failed to compute place IK")
@@ -1710,7 +1710,7 @@ class MotionPlanner:
         )
 
         # Release sequence
-        rospy.loginfo("  Opening gripper...")
+        rospy.logdebug("  Opening gripper...")
         extra_wide_open = 3.5
         controller.send_gripper_command(extra_wide_open)
         rospy.sleep(1.2)  # Wait for gripper to fully open
@@ -1729,10 +1729,10 @@ class MotionPlanner:
             self.move_to_joints(lift_joints, controller, duration=0.6)
 
         # STEP 4: Lift to safe transit height
-        rospy.loginfo(f"  Step 4: Lifting to safe transit height...")
+        rospy.logdebug(f"  Step 4: Lifting to safe transit height...")
         self.move_to_joints(safe_joints, controller, duration=1.5)
 
-        rospy.loginfo("Place complete")
+        rospy.logdebug("Place complete")
         return True
 
     def simple_ik(self, target_pos, gripper_down=True, object_yaw=None):
@@ -1749,13 +1749,13 @@ class MotionPlanner:
         """
         x, y, z = target_pos
         ik_mode = "ANALYTICAL" if self.config.use_analytical_ik else "NUMERICAL"
-        rospy.loginfo(f"IK ({ik_mode}): target world=[{x:.3f}, {y:.3f}, {z:.3f}]")
+        rospy.logdebug(f"IK ({ik_mode}): target world=[{x:.3f}, {y:.3f}, {z:.3f}]")
 
         # Convert from world frame to base_link frame
         x_base = x - self.robot_base_x
         y_base = y - self.robot_base_y
         z_base = z - self.robot_base_z
-        rospy.loginfo(f"IK: target base_link=[{x_base:.3f}, {y_base:.3f}, {z_base:.3f}]")
+        rospy.logdebug(f"IK: target base_link=[{x_base:.3f}, {y_base:.3f}, {z_base:.3f}]")
 
         target_base = np.array([x_base, y_base, z_base])
 
@@ -1778,7 +1778,7 @@ class MotionPlanner:
         # UR5 reach is ~0.85m but with gripper can extend to ~0.95m for near-vertical poses
         max_reach = 0.95
         distance_from_base = np.sqrt(x_base**2 + y_base**2 + z_base**2)
-        rospy.loginfo(
+        rospy.logdebug(
             f"IK: distance from base: {distance_from_base:.3f}m (max reach: {max_reach:.2f}m)"
         )
 
@@ -1802,11 +1802,11 @@ class MotionPlanner:
 
         # Log object yaw if provided
         if object_yaw is not None:
-            rospy.loginfo(f"IK: Aligning gripper to object yaw: {np.degrees(object_yaw):.1f}°")
+            rospy.logdebug(f"IK: Aligning gripper to object yaw: {np.degrees(object_yaw):.1f}°")
 
         # ==================== ANALYTICAL IK ====================
         if self.config.use_analytical_ik:
-            rospy.loginfo("IK: Using ANALYTICAL IK (6-DOF closed-form solution)")
+            rospy.logdebug("IK: Using ANALYTICAL IK (6-DOF closed-form solution)")
 
             result = self._analytical_ik(
                 target_base,
@@ -1821,13 +1821,13 @@ class MotionPlanner:
                 pos = T[:3, 3]
                 z_axis = T[:3, 2]
                 pos_err = np.linalg.norm(target_base - pos) * 1000
-                rospy.loginfo(
+                rospy.logdebug(
                     f"IK solution: [{', '.join([f'{np.degrees(a):.1f}' for a in result_wrapped])}]°"
                 )
-                rospy.loginfo(
+                rospy.logdebug(
                     f"IK FK: pos=[{pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f}], Z=[{z_axis[0]:.2f}, {z_axis[1]:.2f}, {z_axis[2]:.2f}]"
                 )
-                rospy.loginfo(f"IK error: {pos_err:.1f}mm")
+                rospy.logdebug(f"IK error: {pos_err:.1f}mm")
                 return result_wrapped
 
             rospy.logerr(
@@ -1836,7 +1836,7 @@ class MotionPlanner:
             return None
 
         # ==================== NUMERICAL IK ====================
-        rospy.loginfo("IK: Using NUMERICAL IK (iterative solver)")
+        rospy.logdebug("IK: Using NUMERICAL IK (iterative solver)")
 
         best_result = None
         best_error = float('inf')
@@ -1844,7 +1844,7 @@ class MotionPlanner:
         # Use current joints as starting config
         if current_joints is not None:
             starting_configs = [np.array(current_joints[:6])]
-            rospy.loginfo(f"IK: Using current joints as starting config")
+            rospy.logdebug(f"IK: Using current joints as starting config")
         else:
             # Fallback: pick-ready config with gripper pointing down
             pick_ready_joints = np.array(
@@ -1858,9 +1858,9 @@ class MotionPlanner:
                 ]
             )
             starting_configs = [pick_ready_joints]
-            rospy.loginfo(f"IK: No current joints, using pick-ready config")
+            rospy.logdebug(f"IK: No current joints, using pick-ready config")
 
-        rospy.loginfo(f"IK: Trying {len(starting_configs)} starting configuration(s)")
+        rospy.logdebug(f"IK: Trying {len(starting_configs)} starting configuration(s)")
 
         for i, start_config in enumerate(starting_configs):
             result = self._numerical_ik_urdf(
@@ -1875,7 +1875,7 @@ class MotionPlanner:
                 if pos_err < best_error:
                     best_error = pos_err
                     best_result = result
-                    rospy.loginfo(f"IK: Found solution with error {pos_err*1000:.1f}mm")
+                    rospy.logdebug(f"IK: Found solution with error {pos_err*1000:.1f}mm")
 
                 if pos_err < 0.02:  # 20mm good enough, stop searching
                     break
@@ -1886,13 +1886,13 @@ class MotionPlanner:
             pos = T[:3, 3]
             z_axis = T[:3, 2]
             pos_err = np.linalg.norm(target_base - pos) * 1000
-            rospy.loginfo(
+            rospy.logdebug(
                 f"IK solution: [{', '.join([f'{np.degrees(a):.1f}' for a in result_wrapped])}]°"
             )
-            rospy.loginfo(
+            rospy.logdebug(
                 f"IK FK: pos=[{pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f}], Z=[{z_axis[0]:.2f}, {z_axis[1]:.2f}, {z_axis[2]:.2f}]"
             )
-            rospy.loginfo(f"IK error: {pos_err:.1f}mm")
+            rospy.logdebug(f"IK error: {pos_err:.1f}mm")
             return result_wrapped
 
         rospy.logerr(
@@ -2096,7 +2096,7 @@ class MotionPlanner:
         Returns:
             Joint angles [6] or None if failed
         """
-        rospy.loginfo(f"Using fast seeded numerical IK (gripper_down={gripper_down})")
+        rospy.logdebug(f"Using fast seeded numerical IK (gripper_down={gripper_down})")
 
         # UR5 joint limits (radians)
         joint_limits_lower = np.array([-np.pi, -np.pi, -np.pi, -np.pi, -np.pi, -np.pi])
@@ -2142,7 +2142,7 @@ class MotionPlanner:
                     variant[joint_idx] += delta
                     seeds.insert(1, variant)
 
-        rospy.loginfo(f"  Trying {len(seeds)} initial seeds")
+        rospy.logdebug(f"  Trying {len(seeds)} initial seeds")
 
         # Early exit thresholds - stop searching when we find a good enough solution
         # Read from config, with defaults if not present
@@ -2174,14 +2174,14 @@ class MotionPlanner:
                         joint_dist = 0
 
                     valid_solutions.append((sol, pos_err, joint_dist, i))
-                    rospy.loginfo(
+                    rospy.logdebug(
                         f"    Seed {i}: Found solution, pos_err={pos_err*1000:.2f}mm, joint_dist={np.degrees(joint_dist):.0f}°"
                     )
 
                     # EARLY EXIT: If we found a solution that's good enough, stop immediately
                     # This dramatically speeds up IK when current pose is near the target
                     if joint_dist < EARLY_EXIT_JOINT_DIST and pos_err < EARLY_EXIT_POS_ERR:
-                        rospy.loginfo(
+                        rospy.logdebug(
                             f"    ✓ Early exit: Found excellent solution (joint_dist={np.degrees(joint_dist):.0f}° < {early_exit_joint_deg}°, err={pos_err*1000:.2f}mm < {early_exit_pos_mm}mm)"
                         )
                         break  # Stop searching, this is good enough
@@ -2213,7 +2213,7 @@ class MotionPlanner:
                 rospy.logerr(f"     Target position may be in a different arm configuration zone")
                 return None
 
-            rospy.loginfo(
+            rospy.logdebug(
                 f"  Selected seed {best_seed}: joint_dist={np.degrees(best_joint_dist):.0f}°, pos_err={best_error*1000:.2f}mm"
             )
         else:
@@ -2228,14 +2228,14 @@ class MotionPlanner:
             final_pos_error = np.linalg.norm(target_base - final_pos)
             z_axis = T_check[:3, 2]
 
-            rospy.loginfo(
+            rospy.logdebug(
                 f"  Final joints (deg): [{', '.join([f'{np.degrees(a):.1f}' for a in q])}]"
             )
-            rospy.loginfo(f"  Final pos error: {final_pos_error*1000:.2f}mm")
-            rospy.loginfo(f"  Final Z-axis: [{z_axis[0]:.3f}, {z_axis[1]:.3f}, {z_axis[2]:.3f}]")
+            rospy.logdebug(f"  Final pos error: {final_pos_error*1000:.2f}mm")
+            rospy.logdebug(f"  Final Z-axis: [{z_axis[0]:.3f}, {z_axis[1]:.3f}, {z_axis[2]:.3f}]")
 
             if final_pos_error < 0.01:  # 10mm tolerance
-                rospy.loginfo(f"  ✓ IK SUCCESS")
+                rospy.logdebug(f"  ✓ IK SUCCESS")
                 return q
             else:
                 rospy.logwarn(
@@ -2259,11 +2259,11 @@ class MotionPlanner:
         Returns:
             Joint angles [6] or None if unreachable
         """
-        rospy.loginfo(
+        rospy.logdebug(
             f"ANALYTICAL IK: target_base=[{target_pos[0]:.3f}, {target_pos[1]:.3f}, {target_pos[2]:.3f}]"
         )
         if object_yaw is not None:
-            rospy.loginfo(f"ANALYTICAL IK: object_yaw={np.degrees(object_yaw):.1f}°")
+            rospy.logdebug(f"ANALYTICAL IK: object_yaw={np.degrees(object_yaw):.1f}°")
 
         # Get rotation matrix for desired orientation (including object yaw if provided)
         if gripper_down:
@@ -2281,8 +2281,8 @@ class MotionPlanner:
         # Use current joints as reference if available (better than home)
         reference = current_joints[:6] if current_joints is not None else None
 
-        rospy.loginfo(f"IK: Found {solutions.shape[1]} solutions")
-        rospy.loginfo(
+        rospy.logdebug(f"IK: Found {solutions.shape[1]} solutions")
+        rospy.logdebug(
             f"IK: Current joints (deg): {np.degrees(reference) if reference is not None else 'None'}"
         )
 
@@ -2293,7 +2293,7 @@ class MotionPlanner:
                 distance = np.max(
                     np.abs(sol - (reference if reference is not None else self.home_joints))
                 )
-                rospy.loginfo(f"  Sol {i}: {np.degrees(sol[:3])}, dist={distance:.2f}")
+                rospy.logdebug(f"  Sol {i}: {np.degrees(sol[:3])}, dist={distance:.2f}")
 
         # Select best solution (closest to current position or home)
         best_sol = self.select_best_solution(solutions, reference=reference)
@@ -2307,7 +2307,7 @@ class MotionPlanner:
         # 2. TF-based FK only works for the CURRENT robot position, not hypothetical
         # Instead, we verify AFTER execution by comparing actual TF position with target
 
-        rospy.loginfo(
+        rospy.logdebug(
             f"IK: Found solution (deg): [{np.degrees(best_sol[0]):.1f}, {np.degrees(best_sol[1]):.1f}, {np.degrees(best_sol[2]):.1f}, {np.degrees(best_sol[3]):.1f}, {np.degrees(best_sol[4]):.1f}, {np.degrees(best_sol[5]):.1f}]"
         )
 
@@ -2319,19 +2319,19 @@ class MotionPlanner:
         x_check = T_check[:3, 0]
         pos_error = np.linalg.norm(pos_check - target_pos) * 1000  # mm
 
-        rospy.loginfo(
+        rospy.logdebug(
             f"  FK check: pos=[{pos_check[0]:.3f}, {pos_check[1]:.3f}, {pos_check[2]:.3f}]"
         )
-        rospy.loginfo(
+        rospy.logdebug(
             f"  FK check: Z=[{z_check[0]:.2f}, {z_check[1]:.2f}, {z_check[2]:.2f}] (should point down)"
         )
-        rospy.loginfo(
+        rospy.logdebug(
             f"  FK check: Y=[{y_check[0]:.2f}, {y_check[1]:.2f}, {y_check[2]:.2f}] (Y_z should be ~0)"
         )
-        rospy.loginfo(
+        rospy.logdebug(
             f"  FK check: X=[{x_check[0]:.2f}, {x_check[1]:.2f}, {x_check[2]:.2f}] (finger direction)"
         )
-        rospy.loginfo(f"  FK error: {pos_error:.1f}mm (DH/URDF mismatch expected)")
+        rospy.logdebug(f"  FK error: {pos_error:.1f}mm (DH/URDF mismatch expected)")
 
         return best_sol
 
@@ -2405,7 +2405,7 @@ class MotionPlanner:
             rospy.logwarn("IK: Solution violates joint limits")
             return None
 
-        rospy.loginfo(
+        rospy.logdebug(
             f"IK: Found solution (deg): [{np.degrees(joints[0]):.1f}, {np.degrees(joints[1]):.1f}, {np.degrees(joints[2]):.1f}, {np.degrees(joints[3]):.1f}, {np.degrees(joints[4]):.1f}, {np.degrees(joints[5]):.1f}]"
         )
         return joints

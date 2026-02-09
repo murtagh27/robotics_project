@@ -83,6 +83,13 @@ class ObjectSpawner:
         brick_info = BRICK_CLASSES[brick_type]
         mesh_file = brick_info['mesh']
         mass = brick_info['mass']
+        size = brick_info['size']
+
+        # Calculate proper inertia values based on box approximation
+        # I = (1/12) * m * (h^2 + d^2) for each axis
+        ixx = (1.0 / 12.0) * mass * (size[1] ** 2 + size[2] ** 2)
+        iyy = (1.0 / 12.0) * mass * (size[0] ** 2 + size[2] ** 2)
+        izz = (1.0 / 12.0) * mass * (size[0] ** 2 + size[1] ** 2)
 
         # Generate random color for visual diversity (both RViz and Gazebo)
         color_rgb, gazebo_material = self._random_color()
@@ -96,8 +103,9 @@ class ObjectSpawner:
 
             <link name="{object_name}">
                 <inertial>
+                    <origin xyz="0 0 0" rpy="0 0 0"/>
                     <mass value="{mass}"/>
-                    <inertia ixx="0.001" ixy="0.0" ixz="0.0" iyy="0.001" iyz="0.0" izz="0.001"/>
+                    <inertia ixx="{ixx}" ixy="0.0" ixz="0.0" iyy="{iyy}" iyz="0.0" izz="{izz}"/>
                 </inertial>
                 
                 <visual>
@@ -118,10 +126,14 @@ class ObjectSpawner:
 
             <gazebo reference="{object_name}">
                 <material>{gazebo_material}</material>
-                <mu1>0.8</mu1>
-                <mu2>0.8</mu2>
-                <kp>1000000.0</kp>
-                <kd>1.0</kd>
+                <mu1>0.9</mu1>
+                <mu2>0.9</mu2>
+                <kp>100000.0</kp>
+                <kd>10.0</kd>
+                <minDepth>0.0001</minDepth>
+                <maxVel>1.0</maxVel>
+                <maxContacts>10</maxContacts>
+                <selfCollide>false</selfCollide>
             </gazebo>
 
             </robot>

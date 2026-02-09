@@ -98,10 +98,10 @@ class PerceptionVisualizer:
     def run(self):
         """
         @brief Main loop processing camera feed and displaying detections.
-        @details Runs at 1Hz, gets detections from PerceptionModule and visualizes them.
+        @details Runs at 5Hz, gets detections from PerceptionModule and visualizes them.
                  Press 'q' to quit.
         """
-        rate = rospy.Rate(1)
+        rate = rospy.Rate(5)
         cv2.namedWindow('Perception Output', cv2.WINDOW_NORMAL)
 
         while not rospy.is_shutdown():
